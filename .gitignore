@@ -1,0 +1,64 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+backend/venv/
+
+# docker runtime data
+backend/data/
+
+# frontend build + deps (nested under frontend/)
+frontend/node_modules/
+frontend/.next/
+frontend/.out/
+frontend/build/
+
+# sample product-label photos (large, copyrighted) — excluded
+images/
+/image36_2.jpg
+backend/image36_2.jpg
+
+# dev artifact
+*.bak

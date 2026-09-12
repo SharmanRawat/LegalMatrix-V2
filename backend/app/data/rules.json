@@ -1,0 +1,139 @@
+{
+  "rule_version": "LM-PCR-2011-with-2021-USP-amendment-and-all-updates-to-2026",
+  "effective_date": "2023-04-01",
+  "source": {
+    "base_rules": "Legal Metrology (Packaged Commodities) Rules, 2011",
+    "amendment_2021": "G.S.R. 779(E) - USP introduction",
+    "amendment_2022_1": "G.S.R. 226(E) - USP refinements + MRP=USP exemption",
+    "amendment_2022_2": "G.S.R. 577(E) - QR code for electronics (expired)",
+    "amendment_2022_3": "G.S.R. 648(E) - Garment/hosiery exemption",
+    "amendment_2023": "G.S.R. 60(E) - USP final effective date",
+    "amendment_2025_1": "G.S.R. 778(E) - Medical devices exclusion",
+    "amendment_2025_2": "G.S.R. 881(E) - Pan masala carve-out",
+    "amendment_2026_1": "G.S.R. 312(E) - E-commerce country filter",
+    "amendment_2026_2": "G.S.R. 418(E) - Rule 27 registration updates"
+  },
+
+  "declarations_required": [
+    "manufacturer_name_address",
+    "generic_commodity_name",
+    "net_quantity",
+    "month_year_manufacture",
+    "mrp",
+    "consumer_care_details",
+    "dimensions_where_relevant"
+  ],
+
+  "font_size_requirements": {
+    "letters": {
+      "normal": 1.0,
+      "embossed": 2.0
+    },
+    "numerals_weight_volume": [
+      {"condition": "net_quantity <= 200", "unit": "g/ml", "normal": 1.0, "embossed": 2.0},
+      {"condition": "net_quantity > 200 AND net_quantity <= 500", "unit": "g/ml", "normal": 2.0, "embossed": 4.0},
+      {"condition": "net_quantity > 500", "unit": "g/ml", "normal": 4.0, "embossed": 6.0}
+    ],
+    "numerals_length_area_number": [
+      {"condition": "pdp_area <= 100", "unit": "cm²", "normal": 1.0, "embossed": 2.0},
+      {"condition": "pdp_area > 100 AND pdp_area <= 500", "unit": "cm²", "normal": 2.0, "embossed": 4.0},
+      {"condition": "pdp_area > 500 AND pdp_area <= 2500", "unit": "cm²", "normal": 4.0, "embossed": 6.0},
+      {"condition": "pdp_area > 2500", "unit": "cm²", "normal": 6.0, "embossed": 6.0}
+    ]
+  },
+
+  "usp_rules": {
+    "source": "G.S.R. 226(E) and G.S.R. 60(E)",
+    "effective_date": "2023-04-01",
+    "formula": "MRP / Net_Quantity",
+    "rounding": "2_decimal_places",
+    "exemptions": [
+      {"condition": "MRP == Unit_Sale_Price", "action": "USP_declaration_not_required"},
+      {"condition": "alcoholic_beverages_or_spirituous_liquor", "action": "State_Excise_Law_applies"}
+    ],
+    "units": [
+      {"condition": "net_quantity < 1", "unit_type": "kg", "usp_unit": "Rs per g"},
+      {"condition": "net_quantity >= 1", "unit_type": "kg", "usp_unit": "Rs per kg"},
+      {"condition": "net_length < 1", "unit_type": "meter", "usp_unit": "Rs per cm"},
+      {"condition": "net_length >= 1", "unit_type": "meter", "usp_unit": "Rs per meter"},
+      {"condition": "sold_by_number", "unit_type": "number", "usp_unit": "Rs per number"},
+      {"condition": "net_volume < 1", "unit_type": "litre", "usp_unit": "Rs per ml"},
+      {"condition": "net_volume >= 1", "unit_type": "litre", "usp_unit": "Rs per litre"}
+    ]
+  },
+
+  "exemptions": [
+    {
+      "clause": "26(a)",
+      "condition": "net_weight_or_volume <= 10",
+      "unit": "g/ml",
+      "note": "10-20g/ml still requires MRP and Net Qty",
+      "exceptions": [
+        {
+          "commodity": "pan_masala",
+          "source": "G.S.R. 881(E)",
+          "effective_date": "2026-02-01",
+          "action": "exemption_does_NOT_apply"
+        }
+      ]
+    },
+    {
+      "clause": "26(b)",
+      "condition": "fast_food_packed_by_restaurant_or_hotel"
+    },
+    {
+      "clause": "26(c)",
+      "condition": "scheduled_formulations_under_DPCO_1995"
+    },
+    {
+      "clause": "26(d)",
+      "condition": "agricultural_produce > 50",
+      "unit": "kg"
+    },
+    {
+      "clause": "26(f)",
+      "source": "G.S.R. 648(E)",
+      "condition": "garment_or_hosiery_sold_loose_open_at_POS",
+      "effective_date": "2023-01-01",
+      "still_required_declarations": [
+        "manufacturer_marketer_importer_name_address",
+        "country_of_origin_if_imported",
+        "consumer_care_email_phone",
+        "size_indicators_S_M_L_XL_XXL_XXXL_with_metric_cm_or_m",
+        "MRP_inclusive_all_taxes_INR"
+      ]
+    }
+  ],
+
+  "exclusions": {
+    "medical_devices": {
+      "source": "G.S.R. 778(E)",
+      "effective_date": "2025-10-23",
+      "condition": "is_medical_device == true",
+      "action": "route_to_Medical_Devices_Rules_2017",
+      "skip_rules": ["Rule 6", "Rule 7", "Rule 33"]
+    }
+  },
+
+  "e_commerce_rules": {
+    "source": "G.S.R. 312(E)",
+    "effective_date": "2027-07-01",
+    "requirement": "searchable_and_sortable_country_of_origin_filter_for_imported_products",
+    "supersedes": "G.S.R. 128(E) dated 13-02-2026"
+  },
+
+  "placement_rules": {
+    "panel": "Principal Display Panel",
+    "free_area": {
+      "above_below": "height_of_numeral",
+      "left_right": "2x_height_of_numeral"
+    }
+  },
+
+  "manner_rules": {
+    "legibility": "legible_and_prominent",
+    "contrast": "contrasting_color_with_background",
+    "language": ["Hindi (Devanagari)", "English"],
+    "additional_language": "allowed"
+  }
+}
