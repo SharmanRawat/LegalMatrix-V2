@@ -172,6 +172,14 @@ Two layers pulled after run6; measured on the same golden set:
   0 regressions, 166/238**. Other 5 changed cells score-neutral drift (p11 care
   phone found fresh; p12 mfg garbage→blank; p13 mfg case-only; p29 expiry
   blank→bad read; p2 nq `100 g`→`kg` — stale run6 cache vs fresh SLM).
+- **p2 MRP pixel-verified unrecoverable:** tight crop (x780-1020, y1490-1590 —
+  the slot right after `'MRP:₹'`) read as `88888`/`81883`/`81881`/`88838` under
+  ALL 11 enhancement/upscale combos (up3/up6 cubic+lanczos, otsu, clahe,
+  contrast-stretch, gamma, morph-open, unsharp+otsu). The price glyphs are
+  smudged at pixel level in the photo itself — no preprocessing can recover
+  `₹ 440.00`, and injecting the `88888` read as MRP would be actively wrong.
+  Re-photo of the MRP line is the only fix; do NOT add an MRP-blob pass (run9
+  lesson: loss-prone paths go wrong elsewhere).
 
 ## 4. Commands
 
