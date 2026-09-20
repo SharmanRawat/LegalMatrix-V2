@@ -172,14 +172,21 @@ Two layers pulled after run6; measured on the same golden set:
   0 regressions, 166/238**. Other 5 changed cells score-neutral drift (p11 care
   phone found fresh; p12 mfg garbage→blank; p13 mfg case-only; p29 expiry
   blank→bad read; p2 nq `100 g`→`kg` — stale run6 cache vs fresh SLM).
-- **p2 MRP pixel-verified unrecoverable:** tight crop (x780-1020, y1490-1590 —
-  the slot right after `'MRP:₹'`) read as `88888`/`81883`/`81881`/`88838` under
-  ALL 11 enhancement/upscale combos (up3/up6 cubic+lanczos, otsu, clahe,
-  contrast-stretch, gamma, morph-open, unsharp+otsu). The price glyphs are
-  smudged at pixel level in the photo itself — no preprocessing can recover
-  `₹ 440.00`, and injecting the `88888` read as MRP would be actively wrong.
-  Re-photo of the MRP line is the only fix; do NOT add an MRP-blob pass (run9
-  lesson: loss-prone paths go wrong elsewhere).
+- **p2 MRP — awaiting OCR-upgrade decision (CORRECTED):** RapidOCR (PP-OCRv3)
+  cannot read the price — the tight slot (x780-1020, y1490-1590, right after
+  `'MRP:₹'`) reads `88888`/`81881`/`88838` under ALL 11 enhancement/upscale
+  combos tried. **BUT a fresh qwen2.5vl:7b read of the SAME photo returns
+  `mrp: '₹ 440.00'`** — the digits ARE on the photo; the limit is the CPU OCR
+  stack, not the image, so the earlier 're-photo' advice was wrong. The app's
+  built-in rescue (`VLM_RESCUE_ENABLED=1`, threshold 55; p2 confidence 39.4)
+  takes p2 to **COMPLIANT 7/7, Grade A, MRP ₹440.00** — but the rescue
+  mis-files p2's expiry as `08/2020` (PKD date; golden expiry '') and turns
+  manufacturer/care into the full registered-office blob, so the naive rescue
+  is NOT golden-clean and needs a date/contact mis-file guard before it can be
+  enabled. OCR inventory: rapidocr-onnxruntime 1.2.3 = PP-OCRv3 mobile, 13.1 MB
+  total onnx (det 2.4 + rec 11 + cls 0.6), CPU via onnxruntime 1.30.
+  **Decision open: PP-OCRv4 drop-in swap (same engine, ~2× rec model) measured
+  against 166/238, or guarded VLM rescue, or both.**
 
 ## 4. Commands
 
