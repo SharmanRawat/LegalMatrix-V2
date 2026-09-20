@@ -20,6 +20,7 @@ from app.repositories import inspections as inspection_repo
 from app.services import compliance_scorer, heatmap_generator, preprocessing
 from app.services.font_measurement import FontMeasurementService
 from app.services.price_engine import price_engine
+from app.services.value_normalizers import DATE_NOISE_RE, MONTHS
 
 EXPECTED_KEYS = [
     "mrp", "usp", "net_quantity", "product_name",
@@ -39,8 +40,151 @@ REQUIRED_TO_FIELD = {
 
 CRITICAL = ["mrp", "net_quantity", "manufacturer_name_address"]
 
-# A consumer-care line must expose one of these contact channels to count.
-_CARE_CONTACT_RE = re.compile(r"@|toll\s*free|tollfree|1800|1?\d{10}")
+# A consumer-care line must expose one of these contact channels to count:
+# an email, a toll-free line, or a 10–12 digit phone. 12-digit numbers are
+# country-coded Indian mobiles ('+91-22-25259915' -> 912225259915); judging
+# only the raw string (as an old '1?\\d{10}' did) silently rejected them and
+# blanked whole care rows. FSSAI (14–17) / barcode (13) runs stay excluded.
+_CARE_CONTACT_RE = re.compile(r"@|toll\s*free|tollfree|1800", re.I)
+
+
+def _care_contact_like(value: str) -> bool:
+    digits = re.sub(r"\D", "", str(value or ""))
+    return bool(_CARE_CONTACT_RE.search(str(value or ""))
+                or len(digits) in (10, 11, 12))
+
+
+# ── date plausibility (shared by the merge heuristics and label routing) ─────
+# MFG/EXP cells must hold a real date, not a stray line the 3B SLM grabbed
+# ('6 MONTHS', 'Anso Certified Company', 'Mig. Date:') and not two dates glued
+# by the classifier ('SEP/2025-MAR/2027' — usually MFG-EXP printed on one
+# line). _date_component classifies a value; _clean_date_pair drops the junk
+# and splits the glue. Patterns mirror value_normalizers.parse_date so audit
+# and merge agree: month-name (+optional year) OR dd/mm (…yy) OR bare yyyy.
+_MONTH_ALT = "|".join(sorted(MONTHS, key=len, reverse=True))
+_SINGLE_MONTH_RE = re.compile(
+    rf"(?<![A-Z])(?:{_MONTH_ALT})(?![A-Z])(?:\s*[./:-]?\s*\d{{2,4}})?", re.I)
+# A separator between digit groups must be REAL punctuation — a bare space is
+# not ('05 / 08 / 27' ok via \s* around '/'; '85 8' from 'U280656485 8' must
+# NOT match, or a glue line reads as a date).
+_SEP_DATE_RE = re.compile(r"\d{1,2}\s*[/.:-]\s*\d{1,2}(?:\s*[/.:-]\s*\d{1,4})?")
+_BARE_YEAR_RE = re.compile(r"(?<!\d)(?:19|20)\d{2}(?![\d.])")
+_DATE_RANGE_RE = re.compile(
+    rf"((?:{_MONTH_ALT})[./:-]?\s*\d{{2,4}})\s*-\s*((?:{_MONTH_ALT})[./:-]?\s*\d{{2,4}})"
+    r"|(\d{1,2}[/.:]\d{2,4})\s*-\s*(\d{1,2}[/.:]\d{2,4})",
+    re.I)
+
+
+def _numeric_pair_ok(g: str) -> bool:
+    """Reject punctuation-separated digit groups that cannot be a date
+    ('85/8' day 85, '45/60'), keep real ones ('05/08/2027', '06.08:2026',
+    '12/2025' -> month/yr). Month-word groups never reach this check."""
+    if re.search(r"[A-Z]", g):
+        return True
+    nums = [int(x) for x in re.findall(r"\d+", g)]
+    if len(nums) < 2:
+        return False
+    a, b = nums[0], nums[1]
+    # dd/mm or mm/dd, not day>31 / month>12 in both orders.
+    return (a <= 31 and b <= 12) or (b <= 31 and a <= 12)
+
+
+def _date_component(value: str) -> tuple:
+    """Classify a raw manufacturing/expiry cell.
+
+    Returns
+      ("single", cleaned, "")            one plausible date ('JAN/2027',
+                                         '06.08:2026', '2020', '14.04.0')
+      ("range",  first, last)            two dates glued by '-' ('SEP/2025-
+                                         MAR/2027' or '01/2026-05/2027')
+      ("none",   "", "")                 not a date ('6 MONTHS',
+                                         'Anso Certified Company', 'Mig. Date:')
+    """
+    t = DATE_NOISE_RE.sub(" ", str(value or "")).upper()
+    if not t.strip():
+        return "none", "", ""
+    m = _DATE_RANGE_RE.search(t)
+    if m and (m.group(1) or m.group(3)) and (m.group(2) or m.group(4)):
+        return ("range",
+                (m.group(1) or m.group(3)).strip(),
+                (m.group(2) or m.group(4)).strip())
+    groups = []
+    masked = [c for c in t]
+
+    def _blank(a: int, b: int) -> None:
+        for j in range(a, b):
+            masked[j] = " "
+
+    for gm in _SINGLE_MONTH_RE.finditer(t):
+        groups.append(gm.group(0))
+        _blank(gm.start(), gm.end())
+    for sm in _SEP_DATE_RE.finditer("".join(masked)):
+        g = sm.group(0)
+        if _numeric_pair_ok(g):
+            groups.append(g)
+            _blank(sm.start(), sm.end())
+    for by in _BARE_YEAR_RE.finditer("".join(masked)):
+        groups.append(by.group(0))
+        _blank(by.start(), by.end())
+    if not groups:
+        return "none", "", ""
+    if len(groups) == 1:
+        return "single", groups[0].strip(), ""
+    return "range", groups[0].strip(), groups[-1].strip()
+
+
+def _clean_date_pair(mfg: str, exp: str) -> tuple:
+    """Sanitize a mfg/exp pair read as one block: drop text that is not a date
+    and split a glued range ('SEP/2025-MAR/2027' -> mfg SEP/2025, exp MAR/2027)."""
+    km, am, bm = _date_component(mfg)
+    ke, ae, be = _date_component(exp)
+    out_m = mfg if km != "none" else ""
+    out_e = exp if ke != "none" else ""
+    if km == "range" and not out_e:
+        out_m, out_e = am, bm
+    elif ke == "range" and not out_m:
+        out_m, out_e = ae, be
+    elif ke == "range":
+        out_e = be or ae
+    elif km == "range":
+        out_m = am
+    return out_m, out_e
+
+
+# A 3B SLM sometimes hands a promotion/boilerplate line back as the product
+# name ('With TULSI MADHA…', 'Suggested Carnishing', 'CONTENTS Selected
+# Washed', 'Newltem', 'Fewmmended Alowance'). The routing only lets a
+# front-photo name win when it is plausible; gated candidates fall through to
+# the side/back name (or the heuristic value), never losing the run4 baseline.
+_JUNK_NAME_RE = re.compile(
+    r"^\s*(?:with\s+|suggest(?:ed)?\s+|contents\s+|few\w*\s*|"
+    r"regis(?:tered)?\w*\s*|trademark\w*\s*|once\w*\s*|made\w*\s*|"
+    r"new\w*\s*|serving\s+)", re.I)
+
+
+def _name_plausible(value: str) -> bool:
+    return not _JUNK_NAME_RE.match(str(value or ""))
+
+
+# Field -> strongest label-type source, in preference order. The statutory
+# declarations (MRP/USP/net-qty/manufacturer/dates/care/dimensions) print on
+# the back label (or its side panel when no back shot exists); product
+# identity (name / food vs not) lives on the front/PDP face. 'top' is the
+# cap/roof face: on no-back products (e.g. EVEREST snack packs 27/28/29) it is
+# the declaration face (MRP/USP/batch/use-by/net wt), so it ranks just below
+# 'back' for declarations — and last for name/edible (a cap is never the PDP).
+_FIELD_LABEL_TYPES = {
+    "product_name": ("front", "side", "back", "other"),
+    "edible": ("front", "side", "back", "other"),
+    "mrp": ("back", "top", "side", "other", "front"),
+    "usp": ("back", "top", "side", "other", "front"),
+    "net_quantity": ("back", "top", "side", "other", "front"),
+    "manufacturer": ("back", "top", "side", "other", "front"),
+    "manufacturing_date": ("back", "top", "side", "other", "front"),
+    "expiry_date": ("back", "top", "side", "other", "front"),
+    "consumer_care": ("back", "top", "side", "other", "front"),
+    "dimensions": ("back", "top", "side", "other", "front"),
+}
 
 
 def next_inspection_id() -> str:
@@ -48,14 +192,26 @@ def next_inspection_id() -> str:
     return f"LGM-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3).upper()}"
 
 
-def merge_extractions(results: List[Dict]) -> Dict:
+def merge_extractions(results: List[Dict],
+                      label_types: Optional[List[Optional[str]]] = None) -> Dict:
     """Merge per-photo extractions.
 
     MRP / USP / net quantity must reflect one printed declaration, so the three
     are taken together from the single photo that carries the most statutory
     price fields (the back-label block), never mixed across photos. Other fields
     (name, manufacturer, dates…) fall back to longest-string-wins.
+
+    ``label_types`` (aligned with ``results``; None/unknown entries rank last)
+    route each field to the photo whose label type is its strongest source —
+    product_name/edible from the front (PDP), statutory declarations from the
+    back, side/other as back-ups when no back shot was captured. Unlabeled
+    uploads (no label_types) keep the original best-photo heuristics; the
+    MFG/EXP date cleanup (drop non-dates, split glued ranges) applies in both
+    paths because it only ever removes junk that cannot be a valid date.
     """
+    if label_types is None or len(label_types) != len(results):
+        label_types = [None] * len(results)
+    labeled = any(label_types)
     stat_keys = ("mrp", "usp", "net_quantity")
     # Manufacturing/expiry travel together too: a lone month-date on a side
     # panel is usually the expiry, and longest-wins would otherwise let it
@@ -85,7 +241,14 @@ def merge_extractions(results: List[Dict]) -> Dict:
     merged = {}
     if results:
         merged.update(_block_from_best(results, stat_keys, 2))
-        merged.update(_block_from_best(results, date_keys, 2))
+        dblock = _block_from_best(results, date_keys, 2)
+        dm, de = _clean_date_pair(
+            dblock.get("manufacturing_date", ""),
+            dblock.get("expiry_date", ""))
+        if dm:
+            merged["manufacturing_date"] = dm
+        if de:
+            merged["expiry_date"] = de
 
     for result in results:
         if not result:
@@ -95,8 +258,13 @@ def merge_extractions(results: List[Dict]) -> Dict:
                 continue
             if key in stat_keys and key in merged:
                 continue
-            if key in date_keys and key in merged:
-                continue
+            if key in date_keys:
+                # Never let a non-date line ('6 MONTHS', 'Anso Certified…')
+                # fill an mfg/exp cell — junk beats blank one-way only.
+                if _date_component(str(value))[0] == "none":
+                    continue
+                if key in merged:
+                    continue
             if key not in merged or len(str(value)) > len(str(merged[key])):
                 merged[key] = value
 
@@ -108,15 +276,104 @@ def merge_extractions(results: List[Dict]) -> Dict:
     care_candidates = [
         _filled(r).get("consumer_care")
         for r in results
-        if r and re.search(_CARE_CONTACT_RE, str(_filled(r).get("consumer_care", "")))
+        if r and _care_contact_like(_filled(r).get("consumer_care", ""))
     ]
     care_candidates = [c for c in care_candidates if c]
     if care_candidates:
         merged["consumer_care"] = max(care_candidates, key=len)
-    elif "consumer_care" in merged and not re.search(
-        _CARE_CONTACT_RE, str(merged.get("consumer_care", ""))
+    elif "consumer_care" in merged and not _care_contact_like(
+        merged.get("consumer_care", "")
     ):
         merged["consumer_care"] = ""
+
+    if labeled:
+        merged = _route_by_label_types(results, label_types, merged)
+    return merged
+
+
+def _route_by_label_types(results: List[Dict],
+                          label_types: List[Optional[str]],
+                          merged: Dict) -> Dict:
+    """Re-select each field from the photo whose label type is its strongest
+    source, keeping block coherence (stats travel together, dates travel
+    together). Values the routing cannot source are left at their heuristic
+    value in ``merged``."""
+
+    def _rank(field: str, tag: Optional[str]) -> int:
+        order = _FIELD_LABEL_TYPES.get(field, ())
+        return order.index(tag) if tag in order else len(order)
+
+    filled_list = []
+    for r, tag in zip(results, label_types):
+        if not r:
+            filled_list.append(({}, tag))
+            continue
+        filled_list.append((
+            {k: v for k, v in r.items()
+             if isinstance(v, str) and v.strip() and v != "None"},
+            tag,
+        ))
+
+    def _pick(fields: tuple, need: int) -> Optional[Dict]:
+        """Values from the strongest-source photo carrying >= need of fields.
+        Tie-breaks: more fields present, then longer values. consumer_care is
+        additionally contact-gated; product_name must be plausible (no
+        promo/boilerplate lines); mfg/exp must actually read as dates."""
+        best = None  # (score, {field: value})
+        for filled, tag in filled_list:
+            present = {k: str(filled.get(k) or "").strip() for k in fields}
+            if "consumer_care" in fields and present["consumer_care"] \
+                    and not _care_contact_like(present["consumer_care"]):
+                present["consumer_care"] = ""
+            if "product_name" in fields and present["product_name"] \
+                    and not _name_plausible(present["product_name"]):
+                present["product_name"] = ""
+            if "manufacturing_date" in fields and present["manufacturing_date"] \
+                    and _date_component(present["manufacturing_date"])[0] == "none":
+                present["manufacturing_date"] = ""
+            if "expiry_date" in fields and present["expiry_date"] \
+                    and _date_component(present["expiry_date"])[0] == "none":
+                present["expiry_date"] = ""
+            weight = sum(1 for v in present.values() if v)
+            if weight < need:
+                continue
+            score = (min(_rank(f, tag) for f in fields), -weight,
+                     -sum(len(v) for v in present.values() if v))
+            if best is None or score < best[0]:
+                best = (score, present)
+        return best[1] if best else None
+
+    routed: Dict[str, str] = {}
+    # Statutory block: prefer one back/side photo carrying >= 2 price fields,
+    # so MRP+USP+net-qty reflect the same printed declaration.
+    block = _pick(("mrp", "usp", "net_quantity"), need=2) or \
+        _pick(("mrp", "usp", "net_quantity"), need=1)
+    if block:
+        routed.update({k: v for k, v in block.items() if v})
+    # Dates travel together (mfg above exp on the sticker): one photo for both,
+    # then split any 'MFG-EXP' range the classifier glued onto one cell.
+    dblock = _pick(("manufacturing_date", "expiry_date"), need=2) or \
+        _pick(("manufacturing_date", "expiry_date"), need=1)
+    if dblock:
+        dm, de = _clean_date_pair(
+            dblock.get("manufacturing_date", ""),
+            dblock.get("expiry_date", ""))
+        if dm:
+            routed["manufacturing_date"] = dm
+        if de:
+            routed["expiry_date"] = de
+    # Product identity from the front/PDP face; statutory text fields
+    # (consumer_care, dimensions) from their back/side source. manufacturer is
+    # deliberately NOT label-routed: the back short-name ('Sito') sometimes
+    # loses to the side legal name ('Bhavani Pharmaceuticals'), and the
+    # heuristic longest-wins already scores best there.
+    for field in ("product_name", "edible", "consumer_care", "dimensions"):
+        picked = _pick((field,), need=1)
+        if picked and picked[field]:
+            routed[field] = picked[field]
+
+    for k, v in routed.items():
+        merged[k] = v
     return merged
 
 
@@ -467,9 +724,15 @@ def run_inspection(
     user_id: Optional[int] = None,
     ocr=None,
     text_boxes: Optional[Dict[int, List[float]]] = None,
+    label_types: Optional[List[Optional[str]]] = None,
 ) -> Dict:
     """Full pipeline: preprocess → extract → merge → compliance → font →
-    heat-map → radar → persist."""
+    heat-map → radar → persist.
+
+    ``label_types`` (aligned with image_paths, one of front/back/side/other)
+    routes each field to the photo whose label type is its strongest source;
+    None keeps the original best-photo heuristics.
+    """
     ocr = ocr or _get_default_ocr()
 
     individual_results = []
@@ -478,7 +741,7 @@ def run_inspection(
 
     text_boxes = _collect_text_boxes(individual_results)
 
-    merged = merge_extractions(individual_results)
+    merged = merge_extractions(individual_results, label_types)
     safe_decl = {key: merged.get(key, "") for key in EXPECTED_KEYS}
     missing = compute_missing(safe_decl)
     field_evidence = _field_evidence(individual_results, safe_decl)
@@ -489,7 +752,7 @@ def run_inspection(
         rescued = _vlm_rescue(image_paths, individual_results, ocr)
         if rescued:
             individual_results = rescued
-            merged = merge_extractions(individual_results)
+            merged = merge_extractions(individual_results, label_types)
             safe_decl = {key: merged.get(key, "") for key in EXPECTED_KEYS}
             missing = compute_missing(safe_decl)
             field_evidence = _field_evidence(individual_results, safe_decl)

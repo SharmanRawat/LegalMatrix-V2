@@ -129,6 +129,29 @@ def test_zero_mrp_and_usp_rejected():
     assert out2["fields"]["usp"] != ""
 
 
+# ── escalated-date upgrade (p2: bare '2020' -> fused '8 / 2020') ─────────────
+
+def test_date_has_month():
+    from app.services.ocr_engine import _date_has_month
+    assert _date_has_month("8 / 2020") is True    # numeric month+year
+    assert _date_has_month("09/2023") is True
+    assert _date_has_month("JUL 2026") is True    # month name
+    assert _date_has_month("13 / 2020") is False  # implausible month
+    assert _date_has_month("2020") is False       # bare year
+    assert _date_has_month("05.08.2027") is True
+
+
+def test_token_quality_prefers_month_year_date():
+    from app.services.ocr_engine import SmartOCRService
+    svc = SmartOCRService()
+    bare = {"text": "2020", "conf": 0.67}
+    full = {"text": "8 / 2020", "conf": 0.636}
+    # the fuller date read must outscore the higher-confidence bare year
+    assert svc._token_quality(full) > svc._token_quality(bare)
+    assert svc._token_quality(bare) == 0.20
+    assert svc._token_quality(full) == 0.55
+
+
 def test_merge_kills_llm_zero_quantity_without_regex_support():
     """The SLM read '0 g' off image6_3's nutrition table while the regex found
     nothing — the merge must drop the unevidenced zero, not ship it."""
@@ -184,6 +207,64 @@ def test_merge_keeps_evidenced_edible_yes():
     regex = RegexFieldClassifier().classify(lines)
     merged = _merge_classifiers(llm, regex, lines)
     assert merged["fields"]["edible"] == "yes"
+
+
+def test_merge_keeps_hyphenated_care_phone():
+    """A country-coded/std phone with separators ('91-22-25259915' from
+    image27_side) is a valid contact channel; the old raw '1?\d{10}' guard
+    blanked it at extraction time even though _care_contact_like accepts it."""
+    from app.services.ocr_engine import _merge_classifiers
+    lines = _lines(
+        "Registered Office and Executive Consumer Care Contact",
+        "Maharashtra Ph.No.: +91-22-25259915",
+    )
+    llm = {
+        "fields": {
+            "mrp": "", "usp": "", "net_quantity": "", "product_name": "",
+            "manufacturer": "", "manufacturing_date": "", "expiry_date": "",
+            "consumer_care": "", "dimensions": "", "edible": "",
+        },
+        "line_map": {},
+        "engine": "llm",
+    }
+    regex = RegexFieldClassifier().classify(lines)
+    assert regex["fields"]["consumer_care"] == "91-22-25259915"
+    merged = _merge_classifiers(llm, regex, lines)
+    assert merged["fields"]["consumer_care"] == "91-22-25259915"
+
+
+def test_merge_keeps_delimiter_phone_variants():
+    """Same rule with dots and spaces — and id numbers (FSSAI/barcode) still die."""
+    from app.services.ocr_engine import _merge_classifiers
+    lines = _lines("consumer care", "Ph.No.: 011-43206666")
+    for rawnum in ("011-43206666", "022 71230555", "91.7082134999", "18001804109"):
+        llm = {
+            "fields": {
+                "mrp": "", "usp": "", "net_quantity": "", "product_name": "",
+                "manufacturer": "", "manufacturing_date": "", "expiry_date": "",
+                "consumer_care": "", "dimensions": "", "edible": "",
+            },
+            "line_map": {},
+            "engine": "llm",
+        }
+        merged = _merge_classifiers(
+            llm, {"fields": {"consumer_care": rawnum}, "line_map": {}}, lines
+        )
+        assert merged["fields"]["consumer_care"] == rawnum, rawnum
+    llm = {
+        "fields": {
+            "mrp": "", "usp": "", "net_quantity": "", "product_name": "",
+            "manufacturer": "", "manufacturing_date": "", "expiry_date": "",
+            "consumer_care": "10015022004173", "dimensions": "", "edible": "",
+        },
+        "line_map": {},
+        "engine": "llm",
+    }
+    merged = _merge_classifiers(
+        llm, {"fields": {}, "line_map": {}}, lines
+    )
+    # 14-digit licence run is still not a consumer contact
+    assert merged["fields"]["consumer_care"] == ""
 
 
 def test_manufacturer_trailing_batch_number_stripped():

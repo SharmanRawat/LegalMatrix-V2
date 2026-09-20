@@ -13,7 +13,7 @@ from app.services.font_measurement import (
 
 DATASET_IMAGE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "images", "image11_2.jpg",
+    "images", "image3_2.jpg",
 )
 
 TRUETYPE_CANDIDATES = [

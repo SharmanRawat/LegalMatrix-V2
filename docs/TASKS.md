@@ -12,6 +12,13 @@
 - [x] 76 pytest tests (OCR mocked) + product-6 regression test.
 - [x] Audit tooling: `scripts/pipeline_audit.py` (oracle diff, cached),
       `regex_audit.py`, `cascade_bench.py`.
+- [x] Typed oracle audit: per-component comparison with notes + disagreement
+      triage (pipeline_wrong / oracle_wrong / ambiguous) in `pipeline_audit.py`.
+- [x] Canonical normalizers `app/services/value_normalizers.py` — legal
+      equivalence (₹=Rs=INR, JAN 2028=01/2028, Ltd=Limited, grams=g) defined in
+      ONE place, used by the audit, unit-tested (`tests/test_value_normalizers.py`).
+      Adoption candidates: `compliance_scorer` currency check, `price_engine`
+      USP unit, `inspection_service._verify_mrp_currency`.
 - [x] Cleaned dead experiments (`training/`, `update1/`, `update2*.zip`, florence/qwen
       scratch tests) — deleted in this commit. `images/` stays local-only (gitignored).
 
@@ -42,6 +49,119 @@ Efficiency notes (read before "optimising"):
   Same for `VLM_RESCUE_ENABLED=1` — measure the CPU+SLM path first (`=0`), escalate only.
 - The 7B VLM is the oracle, not the runtime: shipping "just call 7B for everything"
   kills offline/CPU demo + latency + GPU cost. Keep `rapidocr + 3b` as default path.
+
+### Label-type routed capture & merge (Front/Back/Side/Other) — DONE & MEASURED
+
+Every dataset product has ≥2 photos, so per-photo label-type routing (front=PDP,
+back=declarations, side, other) is applicable everywhere. Expected wins: product_name
+(only read the front photo — the worst field), manufacturer (back-only), MRP/USP/
+net-qty (back block), mfg/exp swaps (photo-authoritative date routing), consumer_care
+(restrict care union to back/side — also kills date-line false phones). Pure-OCR gaps
+(care phones never read on any photo, e.g. products 6/10/11/17/18/23) are NOT fixed
+by tagging.
+
+Shipped (this session):
+- All 72 dataset photos tagged: `backend/data/label_types.json` (gitignored, built as
+  filename-embedded + manual overrides; 29 front / 25 back / 11 side / 5 top / 2 other;
+  every product has a front photo, products 13/27/28/29 have no back → top/side/other
+  fallback). Tagging UI: `backend/scripts/label_tagger.py` (:8765, keys 1-5, auto-advance;
+  `_top`/`_Top` filenames are first-class `top` types).
+- `merge_extractions(results, label_types)` in `inspection_service.py` — per-field
+  routing (`_FIELD_LABEL_TYPES`: front→name/edible; back→declarations; top→declaration
+  back-up right below back; side/other as further back-ups), block coherence kept
+  (stats & dates travel together, care contact-gated), unlabeled uploads fall back to
+  the original heuristics byte-for-byte.
+- API: `/inspect` & `/inspect/report` accept `label_types` (repeated form field,
+  aligned with `images`; 400 on length mismatch; any of front/back/side/top/other).
+  Image cap raised 3 → 6.
+  `run_inspection(..., label_types=...)` forwards into both merge call sites.
+- Frontend: `page.tsx` upload refactored into per-label-type cards (Front/Back/Side/
+  Top/Other), each with camera + upload; FormData sends images + aligned label_types;
+  same-product confirmation still gating analyze.
+- Audit: `pipeline_audit.py` resolves each photo's label type (manifest + filename,
+  case-insensitive, `_top` → `top`) and labels the pipeline merge only; `_group_images`
+  now accepts label-named files.
+- Tests: +13 routing (`tests/test_label_routing.py`), +2 API label_types e2e
+  (`test_inspection_api.py`), max-image test updated. Full suite 184 passed.
+
+Measured (run5, full 29-product golden sweep): total recall 66.4% → 66.8%.
+product_name 24.1% → 34.5% (front-only read won 5 garbage names); mrp +1;
+net_quantity −1 & expiry −2 (routing regressions). Tuning (run6, this session):
+- Date gate + range split (`_date_component`/`_clean_date_pair`): MFG/EXP cells
+  must read as real dates — '6 MONTHS', 'Anso Certified Company', 'Mig. Date:'
+  are dropped (heuristic AND routing); classifier-glued ranges
+  ('SEP/2025-MAR/2027') split into mfg-first/exp-last. Fixes p13/p7/p8 classes.
+- Junk-name gate (`_name_plausible`): front promo/boilerplate lines ('With
+  TULSI…', 'Suggested Carnishing', 'CONTENTS…', 'Newltem', 'Fewmmended…') don't
+  beat the side/back name. Fixes p15/p22 (falls back, never below run4).
+- manufacturer removed from label routing (back short-name 'Sito' was beating
+  the side legal name 'Bhavani Pharmaceuticals'); heuristic longest-wins stays.
+- Audit per-photo extraction cache (`pipeline_audit_pipe_cache.json`, keyed by
+  path+mtime+size+model): re-runs of merge/routing are deterministic and near-free;
+  `--no-extract-cache` when tuning the SLM prompt, `--no-labels` to measure the
+  routing against the pure heuristics on frozen per-photo data.
+- **`top` label type** added end-to-end (UI card, tagger key 4, API accepts it,
+  audit filename/manifest): cap/roof faces carry batch no + use-by + MRP/USP on
+  no-back packs (EVEREST 27/28/29). Routed back → top → side → other → front for
+  declarations; top stays last for name/edible. Measured on the frozen cache
+  (run11_top): 165/238, **0 cells changed** — neutral here (no-back packs already
+  used their cap via the 'other' fallback) but it's the correct taxonomy for
+  rectangular 6-face products and kills the misleading 'other' tag.
+- Tests: +10 (date gate, range split, name gate, manufacturer heuristic).
+  Full suite 194 passed.
+
+Next sweep (this session, run8/run9/run10 — prompt + gate hardening):
+- run8-gate (frozen cache, deterministic): `_SEP_DATE_RE` separator must be real
+  punctuation (bare space was matching as a date — '85 8' inside `U280656485 8`),
+  bare years 19xx/20xx only, numeric sep-groups must pass day/month plausibility
+  (`_numeric_pair_ok`). Result: p29 expiry garbage→blank, exactly 1 cell changed,
+  0 regressions across 238. KEPT.
+- run9-prompt (fresh extraction): classifier prompt tried (a) batch/lot/EAN codes
+  never dates, (b) both care phone+email. Net-negative: +3 wins (p29 expiry
+  `JAN/2027` — the bullet hit its target — p20 expiry, p2 nq drift) vs −10 losses
+  (p10 mfg+exp and p25 mfg dropped to blank, p9 mrp `MRP RS.:`, p29 nq `NET
+  WEIGHT`, p29 mrp blank, 3 name/format flips) = 158/238. REVERTED; run10
+  byte-identical 165/238. Doors: keep only deterministic gates, treat 3B prompt
+  edits as loss-prone.
+- Suite: 197 passed, 2 skipped (gate tests kept, prompt-content tests removed).
+- Top-type sweep (this turn): `top` first-class label type shipped end-to-end
+  (UI card, tagger key 4, API + audit resolution, routing back→top→side→other→front
+  for declarations). Measured on the frozen cache (run11_top): 165/238, 0 cells
+  changed — ships as the correct 6-face taxonomy, score-neutral on the existing
+  dataset.
+- Care-phone extraction guard (this turn, run12_care): `_merge_classifiers`
+  blanked hyphenated phones (`91-22-25259915` — 2/2/8 digit runs) because its
+  contact-channel test was the old raw `1?\d{10}`; synced to the digit-strip
+  rule `_care_contact_like` already uses at routing. Re-extracted only product 27
+  (4 cached keys dropped, ~40s): p27 care `'' → '91-22-25259915'`, 1 cell
+  changed, 0 regressions, 165/238. p27's care email prints on the un-photographed
+  back face → still unrecoverable from the current photos.
+- Tests: +2 (care-phone merge guard). Full suite 203 passed, 2 skipped.
+
+- Date-upgrade sweep (this turn, run13_dates, fresh extraction of all 72):
+  product 2's back photo OCR'd the mfg line as only `2020` while an algorithm
+  pass read `8 / 2020` (golden `08/2020`). Two code paths dropped the better
+  read: `_token_quality` scored the bare high-conf year above the informative
+  month+year, and the multi-pass escalator only fills EMPTY fields (refused to
+  upgrade a present-but-degenerate date; its SLM re-read on fused lines is flaky
+  anyway — returned `mfg: ''`, hallucinated `mrp: ₹47.00`). Fix (deterministic):
+  fuse now rewards `m/yyyy` reads (+0.35), and the escalator upgrades a bare-year
+  date from the fused token stream at the SAME line index the first pass used
+  (verified plausible month 1-12 via `_date_has_month`). Result: p2 mfg
+  `2020 → 8/2020` (wrong → ok), **1 cell changed, 0 regressions, 166/238**.
+  Other 5 changed cells are score-neutral drift (p11 care phone found fresh,
+  p12 mfg garbage→blank, p13 mfg case-only, p29 expiry blank→bad read).
+- Tests: +2 (`_date_has_month`, fuse `_token_quality` date bonus). Full suite
+  205 passed, 2 skipped.
+
+Still to do:
+- Optional later: prompt-level label hint to the SLM ("this is the BACK label") — not
+  needed for routing correctness, only for per-photo extraction focus.
+- Diagnose the user's 4-image upload that returned poor results (product + output
+  needed) — likely label-type selection and/or OCR-loss; the new top type + correct
+  card tagging mitigates the mis-tag path.
+- Note: renaming photos orphaned old OCR-cache keys (keyed by path+mtime+size) — the
+  first labeled run re-OCRs all 72 (slower once, cached after).
 
 ## 3. Parallel workstreams for teammates (start now, no ML dependency)
 

@@ -2,6 +2,7 @@
 import io
 
 from app.services.inspection_service import (
+    _care_contact_like,
     _extraction_confidence,
     _field_evidence,
 )
@@ -56,7 +57,7 @@ class TestInspectEndpoint:
         assert r.status_code == 200
 
     def test_max_three_images_payload(self, client, sample_image, auth_headers):
-        files = [("images", ("l.jpg", io.BytesIO(b"x"), "image/jpeg"))] * 4
+        files = [("images", ("l.jpg", io.BytesIO(b"x"), "image/jpeg"))] * 7
         r = client.post("/api/inspect", files=files, headers=auth_headers)
         assert r.status_code == 400
 
@@ -291,3 +292,98 @@ class TestSearchAndDashboard:
 
     def test_unauthorized_dashboard(self, client):
         assert client.get("/api/dashboard/stats").status_code == 401
+
+def test_care_contact_gate_accepts_country_coded_phone():
+    # 12-digit country-coded mobile ('+91-22-25259915' -> 912225259915) must
+    # count as a contact channel; the old raw-string gate rejected it and
+    # blanked the whole consumer_care row.
+    assert _care_contact_like("91-22-25259915") is True
+    assert _care_contact_like("+91 7082134999") is True
+    assert _care_contact_like("18001804109") is True
+    assert _care_contact_like("022-71230555") is True
+    assert _care_contact_like("customercare@everestspices.com") is True
+
+
+def test_care_contact_gate_rejects_id_numbers():
+    # FSSAI (14-17) / barcode (13) / batch runs are not consumer contacts
+    assert _care_contact_like("10015022004173") is False
+    assert _care_contact_like("9040041200779") is False
+    assert _care_contact_like("20021409") is False
+
+
+# ── label-type routing through the API ───────────────────────────────────────
+class PathAwareOCR:
+    """FakeOCR returning per-call results in upload order (the saved temp
+    filenames are unpredictable, so we key by extraction order instead)."""
+
+    def __init__(self, results):
+        self.results = results
+        self.verify_currency = None
+        self._calls = 0
+
+    def extract_structured(self, image_path):
+        idx = min(self._calls, len(self.results) - 1)
+        self._calls += 1
+        return dict(self.results[idx])
+
+    def verify_currency_symbol(self, image_path, value):
+        return self.verify_currency
+
+
+def _two_label_images(tmp_path):
+    from PIL import Image
+    a = tmp_path / "front.jpg"
+    b = tmp_path / "back.jpg"
+    Image.new("RGB", (300, 300), "white").save(a, "JPEG")
+    Image.new("RGB", (300, 300), "white").save(b, "JPEG")
+    return str(a), str(b)
+
+
+def test_inspect_with_label_types_routes_fields(client, tmp_path, monkeypatch):
+    import app.services.inspection_service as svc
+
+    front = {"product_name": "Real Brand Name",
+             "manufacturing_date": "01/2026",  # sticker dated line on the PDP face
+             "mrp": "MRP Rs. 999"}
+    back = {"product_name": "NET WT 200g PROMO BANNER TEXT",
+            "mrp": "MRP Rs. 120", "usp": "120 g", "net_quantity": "120 g",
+            "manufacturer": "Maker Pvt Ltd", "manufacturing_date": "01/2025",
+            "expiry_date": "01/2028", "consumer_care": "care@maker.com 1800-100-200",
+            "edible": "yes"}
+    fake = PathAwareOCR([front, back])
+    monkeypatch.setattr(svc, "_get_default_ocr", lambda: fake)
+
+    a, b = _two_label_images(tmp_path)
+    with open(a, "rb") as fa, open(b, "rb") as fb:
+        r = client.post(
+            "/api/inspect",
+            files=[
+                ("images", ("front.jpg", fa, "image/jpeg")),
+                ("images", ("back.jpg", fb, "image/jpeg")),
+            ],
+            data={"label_types": ["front", "back"]},
+        )
+    assert r.status_code == 200
+    dec = r.json()["declarations"]
+    # name from the FRONT photo, declarations from the BACK photo
+    assert dec["product_name"] == "Real Brand Name"
+    assert dec["mrp"] == "MRP Rs. 120"
+    assert dec["usp"] == "120 g" and dec["net_quantity"] == "120 g"
+    assert dec["manufacturer"] == "Maker Pvt Ltd"
+    assert dec["manufacturing_date"] == "01/2025"
+    assert dec["expiry_date"] == "01/2028"
+    assert "care@maker.com" in dec["consumer_care"]
+
+
+def test_inspect_label_types_length_mismatch_rejected(client, tmp_path):
+    a, b = _two_label_images(tmp_path)
+    with open(a, "rb") as fa, open(b, "rb") as fb:
+        r = client.post(
+            "/api/inspect",
+            files=[
+                ("images", ("front.jpg", fa, "image/jpeg")),
+                ("images", ("back.jpg", fb, "image/jpeg")),
+            ],
+            data={"label_types": ["front"]},  # one tag for two images
+        )
+    assert r.status_code == 400

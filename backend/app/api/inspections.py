@@ -4,7 +4,7 @@ import tempfile
 from datetime import datetime
 from typing import List, Dict, Optional
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
 from fastapi.responses import JSONResponse, StreamingResponse, Response, FileResponse
 
 from app.config import get_evidence_dir
@@ -20,8 +20,8 @@ router = APIRouter()
 async def _save_uploads(images: List[UploadFile]) -> List[str]:
     if not images:
         raise HTTPException(400, "At least one image is required")
-    if len(images) > 3:
-        raise HTTPException(400, "Maximum 3 images allowed")
+    if len(images) > 6:
+        raise HTTPException(400, "Maximum 6 images allowed")
     temp_paths = []
     try:
         for image_file in images:
@@ -42,14 +42,26 @@ async def _save_uploads(images: List[UploadFile]) -> List[str]:
 @router.post("/inspect")
 async def inspect_package(
     images: List[UploadFile] = File(...),
+    label_types: List[str] = Form(default=None),
     user=Depends(optional_auth),
 ):
-    """Run a compliance inspection on 1-3 product label images and persist it."""
+    """Run a compliance inspection on 1-6 product label images and persist it.
+
+    ``label_types`` is optional and aligned with ``images`` — one of
+    front/back/side/top/other per photo (e.g. front label = PDP, back label =
+    declaration block, top = cap/roof face). When present, each field is routed
+    to the photo whose label type is its strongest source; absent/unknown
+    entries fall back to the original best-photo heuristics.
+    """
     try:
         paths = await _save_uploads(images)
+        if label_types and len(label_types) != len(paths):
+            raise HTTPException(400, "label_types must have one entry per image")
+        normalized = [t.lower() for t in label_types] if label_types else None
         print(f"[Inspect] Received {len(paths)} image(s) at {datetime.now().isoformat()}", flush=True)
         user_id = user.get("uid") if user else None
-        result = await run_in_thread(inspection_service.run_inspection, paths, user_id)
+        result = await run_in_thread(
+            inspection_service.run_inspection, paths, user_id, None, None, normalized)
         return JSONResponse(content=result)
     except HTTPException:
         raise
@@ -71,13 +83,18 @@ async def run_in_thread(func, *args):
 @router.post("/inspect/report")
 async def generate_report(
     images: List[UploadFile] = File(...),
+    label_types: List[str] = Form(default=None),
     user=Depends(optional_auth),
 ):
-    """Run an inspection and return a PDF compliance report with evidence photos."""
+    """Run an inspection (optionally label-type-routed) and return a PDF report."""
     try:
         paths = await _save_uploads(images)
+        if label_types and len(label_types) != len(paths):
+            raise HTTPException(400, "label_types must have one entry per image")
+        normalized = [t.lower() for t in label_types] if label_types else None
         user_id = user.get("uid") if user else None
-        result = await run_in_thread(inspection_service.run_inspection, paths, user_id)
+        result = await run_in_thread(
+            inspection_service.run_inspection, paths, user_id, None, None, normalized)
         if result["status"] == "ERROR":
             raise HTTPException(500, result.get("message", "Inspection failed"))
 

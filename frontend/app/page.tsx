@@ -12,6 +12,18 @@ import RadarChart from '@/app/components/RadarChart'
 import { api, apiError, downloadBlob, getUser } from '@/app/lib/api'
 import type { HeatmapInfo, RadarResult, SessionUser } from '@/app/lib/api'
 
+type LabelType = 'front' | 'back' | 'side' | 'top' | 'other'
+
+const LABEL_TYPES: { id: LabelType; label: string; desc: string }[] = [
+  { id: 'front', label: 'Front Label (PDP)', desc: 'Brand face & product name — strongest source for the name' },
+  { id: 'back', label: 'Back Label (Declarations)', desc: 'MRP, net qty, manufacturer, dates, consumer care' },
+  { id: 'side', label: 'Side Label', desc: 'Side panel: nutrition / extra dates / care' },
+  { id: 'top', label: 'Top / Cap Label', desc: 'Cap or roof face: batch no, use-by, MRP/USP (EVEREST-style packs)' },
+  { id: 'other', label: 'Other Packaging', desc: 'Seals, pack shots, barcodes' },
+]
+
+const MAX_IMAGES = 6
+
 interface Violation {
   rule_id: string
   rule_no: string
@@ -85,7 +97,9 @@ interface InspectionResult {
 
 export default function Home() {
   const [selectedImages, setSelectedImages] = useState<File[]>([])
+  const [imageTypes, setImageTypes] = useState<LabelType[]>([])
   const [imagePreviews, setImagePreviews] = useState<string[]>([])
+  const [captureTarget, setCaptureTarget] = useState<LabelType>('front')
   const [loading, setLoading] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [result, setResult] = useState<InspectionResult | null>(null)
@@ -120,12 +134,13 @@ export default function Home() {
     }
   }, [])
 
-  const startCamera = async () => {
+  const startCamera = async (type: LabelType = 'front') => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
       })
       streamRef.current = stream
+      setCaptureTarget(type)
       setCameraActive(true)
       setTimeout(() => {
         if (videoRef.current) {
@@ -180,12 +195,13 @@ export default function Home() {
     canvas.toBlob((blob) => {
       if (!blob) return
       const file = new File([blob], `capture_${Date.now()}.jpg`, { type: 'image/jpeg' })
-      if (selectedImages.length >= 3) {
-        toast.error('Maximum 3 images allowed')
+      if (selectedImages.length >= MAX_IMAGES) {
+        toast.error(`Maximum ${MAX_IMAGES} images allowed`)
         return
       }
       const newImages = [...selectedImages, file]
       setSelectedImages(newImages)
+      setImageTypes(prev => [...prev, captureTarget])
       setSameProduct(false)
       const idx = newImages.length - 1
       createPreview(file, (dataUrl) => {
@@ -195,20 +211,23 @@ export default function Home() {
           return next
         })
       })
-      toast.success(`Photo ${newImages.length} captured!`)
+      toast.success(
+        `Photo ${newImages.length} captured for ${LABEL_TYPES.find(t => t.id === captureTarget)?.label ?? captureTarget}`,
+      )
     }, 'image/jpeg', 0.92)
   }
 
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>, type: LabelType) => {
     const files = Array.from(e.target.files || [])
     if (files.length === 0) return
-    if (selectedImages.length + files.length > 3) {
-      toast.error('Maximum 3 images allowed')
+    if (selectedImages.length + files.length > MAX_IMAGES) {
+      toast.error(`Maximum ${MAX_IMAGES} images allowed`)
       return
     }
 
     const newImages = [...selectedImages, ...files]
     setSelectedImages(newImages)
+    setImageTypes(prev => [...prev, ...files.map(() => type)])
     setSameProduct(false)
 
     files.forEach((file, j) => {
@@ -226,6 +245,7 @@ export default function Home() {
 
   const removeImage = (index: number) => {
     setSelectedImages(prev => prev.filter((_, i) => i !== index))
+    setImageTypes(prev => prev.filter((_, i) => i !== index))
     setImagePreviews(prev => prev.filter((_, i) => i !== index))
     setSameProduct(false)
     if (viewingPreview === index) setViewingPreview(null)
@@ -249,6 +269,7 @@ export default function Home() {
 
     const formData = new FormData()
     selectedImages.forEach(image => formData.append('images', image))
+    imageTypes.forEach(type => formData.append('label_types', type))
 
     try {
       const response = await api.post('/api/inspect', formData, { timeout: 600000 })
@@ -350,6 +371,7 @@ export default function Home() {
     setDownloadingPdf(true)
     const formData = new FormData()
     selectedImages.forEach(image => formData.append('images', image))
+    imageTypes.forEach(type => formData.append('label_types', type))
     try {
       const resp = await api.post('/api/inspect/report', formData, {
         responseType: 'blob',
@@ -439,6 +461,19 @@ export default function Home() {
   const circumference = 2 * Math.PI * 45
   const dashoffset = circumference - (score / 100) * circumference
 
+  // Per-label-type bookkeeping over the flat image list (order = append order).
+  const counts: Record<LabelType, number> = { front: 0, back: 0, side: 0, top: 0, other: 0 }
+  imageTypes.forEach((t) => { counts[t] = (counts[t] || 0) + 1 })
+  const totalImages = selectedImages.length
+  const typeRange = (type: LabelType) => {
+    let start = 0
+    for (const t of LABEL_TYPES) {
+      if (t.id === type) return { start, len: counts[t.id] }
+      start += counts[t.id]
+    }
+    return { start: 0, len: 0 }
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       <Navbar />
@@ -455,12 +490,21 @@ export default function Home() {
 
       {/* Upload / Capture Section */}
       <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
-        <h2 className="text-lg font-semibold text-gray-800 mb-4">Capture or Upload Product Images</h2>
-        <p className="text-sm text-gray-500 mb-4">Upload or take 1-3 photos of the product label</p>
+        <h2 className="text-lg font-semibold text-gray-800 mb-1">Capture or Upload Product Images</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          Add photos per label type (up to {MAX_IMAGES} total · {totalImages} added). The inspection routes each
+          field to the right photo — product name from the <span className="font-medium text-gray-700">front</span>,
+          declarations from the <span className="font-medium text-gray-700">back</span>.
+        </p>
 
         {/* Camera View */}
         {cameraActive && (
           <div className="mb-4 rounded-lg overflow-hidden border border-gray-300 relative">
+            <div className="absolute top-3 left-0 right-0 flex justify-center">
+              <span className="bg-black/70 text-white text-xs font-semibold px-3 py-1 rounded-full">
+                Capturing for: {LABEL_TYPES.find(t => t.id === captureTarget)?.label ?? captureTarget}
+              </span>
+            </div>
             <video ref={videoRef} className="w-full max-h-[400px] object-contain bg-black" autoPlay playsInline muted />
             <canvas ref={canvasRef} className="hidden" />
             <div className="absolute bottom-3 left-0 right-0 flex justify-center gap-3">
@@ -480,38 +524,115 @@ export default function Home() {
           </div>
         )}
 
-        <div className="flex flex-col sm:flex-row gap-3">
-          {!cameraActive && (
-            <button
-              onClick={startCamera}
-              className="px-5 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center gap-2"
-            >
-              <Camera className="w-4 h-4" /> Open Camera
-            </button>
-          )}
+        {/* Per-label-type capture cards */}
+        <div className="space-y-3">
+          {LABEL_TYPES.map((lt) => {
+            const { start, len } = typeRange(lt.id)
+            return (
+              <div
+                key={lt.id}
+                className={`border rounded-xl p-4 transition-colors ${
+                  len > 0 ? 'border-blue-300 bg-blue-50/50' : 'border-gray-200 bg-white'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-800">{lt.label}</h3>
+                    <p className="text-xs text-gray-500">{lt.desc}</p>
+                    <p className={`text-xs mt-0.5 ${len > 0 ? 'text-blue-600 font-medium' : 'text-gray-400'}`}>
+                      {len} photo{len !== 1 ? 's' : ''}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    {!cameraActive && (
+                      <button
+                        onClick={() => startCamera(lt.id)}
+                        className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-xs flex items-center gap-1.5 font-semibold"
+                      >
+                        <Camera className="w-4 h-4" /> Capture
+                      </button>
+                    )}
+                    <label className="cursor-pointer">
+                      <div className="px-3 py-2 border border-gray-300 bg-white text-gray-700 rounded-lg hover:border-blue-500 hover:text-blue-600 text-xs flex items-center gap-1.5 font-semibold">
+                        <Upload className="w-4 h-4" /> Upload
+                      </div>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        className="hidden"
+                        onChange={(e) => handleImageSelect(e, lt.id)}
+                      />
+                    </label>
+                  </div>
+                </div>
 
-          <label className="flex-1 cursor-pointer">
-            <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-blue-500 transition-colors">
-              <input
-                type="file"
-                accept="image/*"
-                multiple
-                onChange={handleImageSelect}
-                className="hidden"
-              />
-              <Upload className="w-6 h-6 mx-auto text-gray-400 mb-1" />
-              <p className="text-sm text-gray-600">
-                {selectedImages.length === 0
-                  ? 'Click to select images'
-                  : `${selectedImages.length}/3 image${selectedImages.length !== 1 ? 's' : ''} selected`}
-              </p>
-              <p className="text-xs text-gray-400 mt-1">JPG, PNG supported</p>
-            </div>
+                {len > 0 && (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 mt-3">
+                    {imagePreviews.slice(start, start + len).map((preview, i) => {
+                      const flatIdx = start + i
+                      return (
+                        <div key={flatIdx} className="relative rounded-lg border border-gray-200 overflow-hidden bg-white">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={preview || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect width="200" height="200" fill="%23f3f4f6"/%3E%3Ctext x="100" y="100" font-family="sans-serif" font-size="14" fill="%236b7280" text-anchor="middle" dy=".3em"%3ENo Image%3C/text%3E%3C/svg%3E'}
+                            alt={`${lt.label} photo ${i + 1}`}
+                            title="Click to enlarge and verify"
+                            onClick={() => preview && setViewingPreview(flatIdx)}
+                            className="w-full h-32 object-contain bg-gray-50 cursor-pointer"
+                          />
+                          <span className="absolute top-2 left-2 text-[10px] font-bold px-2 py-0.5 rounded bg-black/60 text-white">
+                            {lt.id} · {i + 1}
+                          </span>
+                          <div className="group absolute inset-0 hover:bg-black/20 transition-all flex items-center justify-center">
+                            <button
+                              onClick={() => removeImage(flatIdx)}
+                              className="opacity-0 group-hover:opacity-100 transition-opacity bg-red-600 text-white p-1.5 rounded-full"
+                              title="Remove image"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        {loading && (
+          <p className="text-xs text-gray-500 mt-3">
+            Vision-model inspection typically takes 1-3 min per image. The request is in flight.
+          </p>
+        )}
+
+        {/* Same-product confirmation */}
+        {totalImages > 0 && (
+          <label className="mt-4 flex items-start gap-3 bg-blue-50 border border-blue-200 rounded-lg p-4 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={sameProduct}
+              onChange={(e) => setSameProduct(e.target.checked)}
+              className="mt-0.5 w-4 h-4 accent-blue-600"
+            />
+            <span className="text-sm text-gray-800">
+              I confirm all {totalImages} photo{totalImages !== 1 ? 's' : ''} show the{' '}
+              <span className="font-semibold">same product</span> being inspected.
+              <span className="block text-xs text-gray-500 mt-0.5">
+                Required before analyzing — mixing photos of different products gives a misleading compliance score.
+              </span>
+            </span>
           </label>
+        )}
 
+        {/* Analyze */}
+        <div className="mt-4 flex items-center gap-3 flex-wrap">
           <button
             onClick={handleUpload}
-            disabled={selectedImages.length === 0 || loading || !sameProduct}
+            disabled={totalImages === 0 || loading || !sameProduct}
             className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 min-w-[140px]"
           >
             {loading ? (
@@ -526,67 +647,10 @@ export default function Home() {
               </>
             )}
           </button>
+          {totalImages > 0 && !sameProduct && (
+            <p className="text-xs text-amber-600">Confirm the photos show the same product, then analyze.</p>
+          )}
         </div>
-
-        {loading && (
-          <p className="text-xs text-gray-500 mt-3">
-            Vision-model inspection typically takes 1-3 min per image. The request is in flight.
-          </p>
-        )}
-
-        {/* Image Previews */}
-        {imagePreviews.length > 0 && (
-          <div className="mt-6">
-            <h3 className="text-sm font-medium text-gray-700 mb-1">
-              Selected Images ({imagePreviews.length})
-            </h3>
-            <p className="text-xs text-amber-600 mb-3">
-              Verify every photo shows the <span className="font-semibold">same product</span> before analyzing.
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {imagePreviews.map((preview, index) => (
-                <div key={index} className="relative rounded-lg border border-gray-200 overflow-hidden bg-white">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={preview || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect width="200" height="200" fill="%23f3f4f6"/%3E%3Ctext x="100" y="100" font-family="sans-serif" font-size="14" fill="%236b7280" text-anchor="middle" dy=".3em"%3ENo Image%3C/text%3E%3C/svg%3E'}
-                    alt={`Product image ${index + 1}`}
-                    title="Click to enlarge and verify"
-                    onClick={() => preview && setViewingPreview(index)}
-                    className="w-full h-48 object-contain bg-gray-50 cursor-pointer"
-                  />
-                  <span className="absolute top-2 left-2 text-xs font-bold px-2 py-0.5 rounded bg-black/60 text-white">
-                    Photo {index + 1}
-                  </span>
-                  <div className="group absolute inset-0 hover:bg-black/20 transition-all flex items-center justify-center">
-                    <button
-                      onClick={() => removeImage(index)}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity bg-red-600 text-white p-2 rounded-full"
-                      title="Remove image"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <label className="mt-4 flex items-start gap-3 bg-blue-50 border border-blue-200 rounded-lg p-4 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={sameProduct}
-                onChange={(e) => setSameProduct(e.target.checked)}
-                className="mt-0.5 w-4 h-4 accent-blue-600"
-              />
-              <span className="text-sm text-gray-800">
-                I confirm all {imagePreviews.length} photo{imagePreviews.length !== 1 ? 's' : ''}{' '}
-                show the <span className="font-semibold">same product</span> being inspected.
-                <span className="block text-xs text-gray-500 mt-0.5">
-                  Required before analyzing — mixing photos of different products gives a misleading compliance score.
-                </span>
-              </span>
-            </label>
-          </div>
-        )}
       </section>
 
       {/* Results Section */}

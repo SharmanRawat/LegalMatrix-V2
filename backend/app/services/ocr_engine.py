@@ -180,6 +180,21 @@ _NO_VALIDATE = {"edible"}  # semantic verdicts, not printed label text
 # word-boundary matching — so LLM product names are screened for address
 # FRAGMENTS (imported from field_classifier). Two distinct hits are required
 # to keep real names like 'Park Avenue' alive.
+_DATE_MONTH_NAME_RE = re.compile(
+    r"\b(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\b", re.I
+)
+_DATE_MONTH_NUM_RE = re.compile(r"\b(\d{1,2})\s*[/.-]\s*(?:19|20)\d{2}\b")
+
+
+def _date_has_month(value: str) -> bool:
+    """True when a date string carries a month (name, or m/yyyy pair with a
+    plausible month 1-12) — i.e. it is more complete than a bare year."""
+    if _DATE_MONTH_NAME_RE.search(value):
+        return True
+    m = _DATE_MONTH_NUM_RE.search(value)
+    return bool(m and 1 <= int(m.group(1)) <= 12)
+
+
 def _merge_classifiers(llm: Dict, regex: Dict, lines: List[Dict]) -> Dict:
     """Merge LLM + regex extraction, preferring the regex for structured
     numeric fields and filling any LLM-empty field from the regex result."""
@@ -246,11 +261,15 @@ def _merge_classifiers(llm: Dict, regex: Dict, lines: List[Dict]) -> Dict:
             # Material/lid/recycling lines are never physical dimensions.
             llm_fields[key] = ""
             merged_map.pop(key, None)
-        elif key == "consumer_care" and not re.search(
-            r"@|toll\s*free|tollfree|1800|1?\d{10}", low
+        elif key == "consumer_care" and not (
+            re.search(r"@|toll\s*free|tollfree|1800", low)
+            or len(re.sub(r"\D", "", low)) in (10, 11, 12)
         ):
             # A care line must contain a contact channel; disclaimers like
             # "All pictures shown are for illustration" are not consumer care.
+            # Phones may carry separators ('91-22-25259915' -> 12 digits — the
+            # old raw '1?\d{10}' blanked every hyphenated STD-code phone, e.g.
+            # image27's care row); FSSAI (14-17) / barcode (13) runs stay out.
             llm_fields[key] = ""
             merged_map.pop(key, None)
         elif key == "product_name" and _ADDRESS_LINE_RE.search(val):
@@ -440,10 +459,40 @@ class SmartOCRService:
                             )
                         fields2 = classification2["fields"]
                         for k in EXPECTED_KEYS:
-                            if not str(fields.get(k, "") or "").strip() and \
-                                    str(fields2.get(k, "") or "").strip():
+                            v1 = str(fields.get(k, "") or "").strip()
+                            v2 = str(fields2.get(k, "") or "").strip()
+                            if not v1 and v2:
                                 fields[k] = fields2[k]
                                 line_map[k] = classification2.get("line_map", {}).get(k, [])
+                            elif (
+                                k in ("manufacturing_date", "expiry_date")
+                                and v1 and v2
+                                and re.fullmatch(r"(?:19|20)\d{2}", v1)
+                                and _date_has_month(v2)
+                            ):
+                                # Primary pass read only the year of a date line
+                                # ('2020'); the escalated pass read the full
+                                # month+year ('8 / 2020'). Upgrade the degenerate
+                                # read instead of keeping it just because it isn't
+                                # empty (p2 mfg '2020' vs golden '08/2020').
+                                fields[k] = fields2[k]
+                                line_map[k] = classification2.get("line_map", {}).get(k, [])
+                            elif (
+                                k in ("manufacturing_date", "expiry_date")
+                                and re.fullmatch(r"(?:19|20)\d{2}", v1)
+                            ):
+                                # The escalated SLM read can be flakier/emptier than
+                                # the first pass, so also upgrade deterministically
+                                # from the fused token stream: the fuse replaced the
+                                # bare-year line with a fuller month+year read at the
+                                # same index (p2: '2020' -> '8 / 2020'), and the
+                                # first-pass line_map still points at that line.
+                                lid = (line_map.get(k) or classification2.get("line_map", {}).get(k, []) or [])
+                                if lid and lid[0] < len(lines2):
+                                    fused_text = str(lines2[lid[0]].get("text", "") or "").strip()
+                                    if _date_has_month(fused_text):
+                                        fields[k] = re.sub(r"\s*([/-])\s*", r"\1", fused_text)
+                                        line_map[k] = [lid[0]]
                         tokens = fused
                         escalated = True
 
@@ -487,6 +536,11 @@ class SmartOCRService:
             r"\d{1,2}[\s./-](?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)"
             r"[\s./-]\d{2,4}", text, re.IGNORECASE,
         ):
+            score += 0.35
+        # A numeric month+year ('8 / 2020', '10.2024') is the full date value
+        # and must beat a bare high-conf year from the primary pass, or the
+        # escalation keeps the degenerate read (p2 mfg '2020' vs '08/2020').
+        if re.search(r"(?<!\d)\d{1,2}\s*[/.-]\s*(?:19|20)\d{2}(?!\d)", text):
             score += 0.35
         if re.search(r"\b\d{1,3}[.,]\d{2}\b", text):
             score += 0.25

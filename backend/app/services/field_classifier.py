@@ -420,6 +420,17 @@ class RegexFieldClassifier:
             joined = f"{texts[i]} {texts[i + 1]}"
             match_line(joined, [i, i + 1], pairs_ok=True)
 
+        # consumer_care override: the per-line matcher emits at most one
+        # contact, dropping non-1800 phones and phone+email pairs. Always
+        # rebuild care from ALL printed channels (union, reading order).
+        care = self._collect_care(texts)
+        if care:
+            fields["consumer_care"] = care
+            line_map["consumer_care"] = [
+                i for i, t in enumerate(texts)
+                if re.search(r"@[\w.-]+\.[A-Za-z]{2,}|\d[\s\-()]?\d", t)
+            ]
+
         if not fields["mrp"] or not fields["usp"]:
             mrp_val, usp_val, mrp_ids, usp_ids = self._match_sticker_prices(
                 texts, fields.get("net_quantity", "")
@@ -670,6 +681,58 @@ class RegexFieldClassifier:
         if phone:
             return phone.group(0)
         return ""
+
+    @staticmethod
+    def _collect_care(texts: List[str]) -> str:
+        """Union of ALL contact channels printed on the label, in reading order.
+
+        The per-line matcher returns at most ONE email or ONE 1800 number, so a
+        phone like '022-71230555' (no 1800) or a phone+email pair on one line
+        was never emitted — the biggest single source of consumer_care losses.
+        This pass collects every email, every toll-free, and every phone that
+        is printed grouped (digits separated by space/hyphen/bracket, e.g.
+        '022-71230555', '+91 9825588822', '91069 80469', '1800 103 1947') or
+        sits on a contact-hint line ('TEL:', 'PHONE', 'CALL US', 'CARE',
+        'TOLL-FREE'), which keeps bare barcode / FSSAI / batch digit-runs out.
+        """
+        contact_hints = ("TEL", "PHONE", "PH.NO", "PHNO", "CALL", "CARE",
+                         "TOLL", "E-MAIL", "EMAIL", "@")
+        # OCR often glues the printed 'E-MAIL:'/'TEL:' label onto the address
+        # itself ('E-MAlldaburcares@dabur.com' from E-MAIL:DAUBURCARES@…),
+        # so strip the label prefix from the local part when it appears glued.
+        email_label_pfx = re.compile(
+            r"^(?:e[-_. ]?ma?l{1,2}|mail)[.:_-]?", re.I)
+        contacts: List[str] = []
+        seen_digits: set = set()
+        for t in texts:
+            upper = t.upper()
+            hinted = any(h in upper for h in contact_hints)
+            hinted = hinted or bool(re.search(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", t))
+            for em in re.finditer(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", t):
+                val = em.group(0).lower()
+                stripped = email_label_pfx.sub("", val)
+                if stripped.split("@", 1)[0]:
+                    val = stripped
+                if val not in contacts:
+                    contacts.append(val)
+            for ph in re.finditer(r"\d[\d\s\-()]*\d", t):
+                digits = re.sub(r"\D", "", ph.group(0))
+                if not (len(digits) in (10, 11, 12) or digits.startswith("1800")):
+                    continue
+                # require a grouping separator OR a contact-hint line; a bare
+                # digit run on a plain line is more likely barcode/batch/id.
+                # Even with a separator, the first group must be phone-shaped
+                # (2–6 digits): '280656485 8' from a date line is not one.
+                first_seg = re.split(r"[\s\-()]+", ph.group(0))[0]
+                if not (re.search(r"[\s\-()]", ph.group(0))
+                        and 2 <= len(first_seg) <= 6):
+                    if not (hinted or digits.startswith("1800")):
+                        continue
+                if digits in seen_digits:
+                    continue
+                seen_digits.add(digits)
+                contacts.append(ph.group(0).strip())
+        return ", ".join(contacts)
 
     @staticmethod
     def _match_manufacturer(text: str) -> str:
