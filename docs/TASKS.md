@@ -1,5 +1,20 @@
 # TASKS — where we are, what is next, how to parallelise
 
+> **PROJECT BACKGROUND (read before anything else):**
+> LegalMatrix (MetrIQ) — SIH 2026 Problem Statement **PS 26034** (Ministry of
+> Consumer Affairs, Dept. of Consumer Affairs): a field inspector photographs a
+> packaged-food label with a phone; the platform extracts the statutory
+> declarations (MRP, USP, net qty, name, manufacturer, mfg/exp dates, consumer
+> care, dimensions, edibility), checks them against the **Legal Metrology
+> (Packaged Commodities) Rules, 2011** (as amended), measures font readability,
+> and produces an evidence-backed compliance report. Full context:
+> `README.md` (problem statement + architecture), `docs/PRD.md` (requirements),
+> `docs/ARCHITECTURE.md`, `docs/DESIGN.md`, `docs/MEMORY.md` §1 (why the
+> pipeline is shaped this way), `docs/RULES.md`. The golden-accuracy program
+> (measured vs `data/answers_golden.json` via `scripts/pipeline_audit.py`)
+> exists because the compliance reports the demo produces are only as good as
+> the 10 extracted fields per product.
+
 ## 1. Done (in this commit)
 
 - [x] FastAPI backend + Next.js PWA + Ollama compose; seeded admin; HMAC roles.
