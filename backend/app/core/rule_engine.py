@@ -66,8 +66,13 @@ class RuleEngine:
         self,
         declarations: Dict[str, str],
         missing: List[str],
+        currency_verified: Optional[Dict[str, bool]] = None,
     ) -> Dict:
-        """Return compliance_score, violations list, and summary."""
+        """Return compliance_score, violations list, and summary.
+
+        currency_verified: {field: True} for price fields whose currency
+        symbol was visually confirmed on the label (VLM dropped the ₹/Rs.
+        glyph during OCR though the print carries it)."""
         total_rules = len(self.get_required_declarations())
         if total_rules == 0:
             return {"compliance_score": 100, "violations": [], "passed_count": 0, "total_rules": 0}
@@ -91,7 +96,7 @@ class RuleEngine:
                 })
             else:
                 # Field present — do format checks
-                fmt_issues = self._check_format(req, value)
+                fmt_issues = self._check_format(req, value, currency_verified=currency_verified)
                 if fmt_issues:
                     violations.append({
                         "rule_id": req,
@@ -127,12 +132,14 @@ class RuleEngine:
         }
         return mapping.get(req)
 
-    def _check_format(self, rule_id: str, value: str) -> Optional[str]:
+    def _check_format(self, rule_id: str, value: str, currency_verified: Optional[Dict[str, bool]] = None) -> Optional[str]:
         if not value or not value.strip():
             return None
 
         if rule_id == "mrp":
-            ok, msg = self.validate_mrp_format(value)
+            ok, msg = self.validate_mrp_format(
+                value, symbol_verified=bool((currency_verified or {}).get("mrp"))
+            )
             if not ok:
                 return msg
 
@@ -164,10 +171,11 @@ class RuleEngine:
                     return {"normal": rule.get("normal"), "embossed": rule.get("embossed")}
         return {"normal": None, "embossed": None}
 
-    def validate_mrp_format(self, mrp_text):
+    def validate_mrp_format(self, mrp_text, symbol_verified=False):
         if not mrp_text:
             return False, "MRP not found"
-        if "₹" not in mrp_text and "rs" not in mrp_text.lower() and "inr" not in mrp_text.lower():
+        has_symbol = "₹" in mrp_text or "rs" in mrp_text.lower() or "inr" in mrp_text.lower()
+        if not symbol_verified and not has_symbol:
             return False, "MRP should use Indian currency symbol (₹ or Rs.)"
         if not re.search(r'\d+', mrp_text):
             return False, "MRP should contain a numeric value"

@@ -1,36 +1,35 @@
-"""
-font_measurement.py — font size / readability analysis.
+"""font_measurement.py — font size / readability analysis.
 
 Calibration chain (in priority order)
 -------------------------------------
-1. "barcode" — detect the product barcode (always present on the label, same
-   focal plane as the text). Barcode printed magnification is NOT fixed, so
-   we attach increased uncertainty instead of treating 20 mm as exact.
-2. "exif" — camera-metric calibration from EXIF (35 mm-equivalent focal
-   length -> horizontal FOV, and SubjectDistance).  No reference object is
-   needed in the photo.  Higher uncertainty because SubjectDistance is an
-   estimate.
-3. Neither usable -> measure() returns a CANNOT_MEASURE status with an
-   auditable reason. We NEVER fabricate a figure from an uncalibrated image.
+1. "credit_card" — a credit/debit card photographed beside the product is
+   ISO/IEC 7810 ID-1 (85.60 x 53.98 mm), an exact universal reference.
+2. "barcode" — product barcode on the same focal plane; magnification is not
+   fixed so uncertainty is higher.
+3. "exif" — camera-metric calibration from phone EXIF (35 mm-equivalent focal
+   length -> horizontal FOV, and SubjectDistance).
+4. None usable -> measure() returns CANNOT_MEASURE with an auditable reason.
+   We never fabricate a figure from an uncalibrated image.
 
 Measurement
 -----------
-- If a text region box is supplied (from VLM localization, normalized 0-1000
-  or absolute pixels), measure the CAP-HEIGHT of glyphs inside it: vertical
-  height of the dominant capital/digit stroke cluster, so descenders
-  ('g','p','q','y') do not inflate the reading.
+- If OCR token boxes are supplied (new pipeline), each recognised token's
+  pixel height is converted to mm via the calibration reference and compared
+  against the LM-PCR minimum.
+- If a VLM text region box is supplied (legacy path), measure the CAP-HEIGHT
+  of glyphs inside it (vertical height of the dominant capital/digit stroke
+  cluster, so descenders do not inflate the reading).
 - Otherwise fall back to heuristic component heights in the lower half of the
-  image (median), excluding the barcode region. The heuristic is UNVALIDATED
-  on our real dataset, so its results are reported as REVIEW_REQUIRED
-  (informational only) unless backed by a clean VLM box.
+  image (median), excluding the barcode region; this is UNVALIDATED so it is
+  always reported as REVIEW_REQUIRED (informational only).
 
-Defensibility gates (what the critical review added)
-----------------------------------------------------
-- A VLM box must pass a geometric + glyph-cluster sanity check before its
-  cap-height reading is trusted. A rejected box falls back to the heuristic.
-- A measured mm outside [0.3, 10.0] x required_mm is implausible for the
-  numerals of a label and forces REVIEW_REQUIRED.
-- The heuristic lower-half method never produces an automated verdict.
+Defensibility gates
+-------------------
+- A box/token must pass geometric + glyph sanity checks before its reading is
+  trusted.
+- A measured mm outside [0.3, 10.0] x required_mm is implausible and forces
+  REVIEW_REQUIRED.
+- The lower-half heuristic never produces an automated verdict.
 """
 
 import logging
@@ -42,25 +41,25 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from app.services.scale_calibrator import (
+    ScaleCalibrator,
+    calibration_rejected_reason,
+    detect_credit_card,
+    compute_ppm_from_barcode as _scan_barcode,
+)
+
 logger = logging.getLogger(__name__)
 
-# Barcode symbols print at a magnification factor of ~0.8-2.0x, so this nominal
-# width is a coarser reference than a fixed-dimension object would be.
-BARCODE_WIDTH_MM = 20.0
 BARCODE_UNCERTAINTY = 0.15
 EXIF_UNCERTAINTY = 0.20
 
-# Plausibility bounds for label close-ups. When phone EXIF SubjectDistance is
-# missing/garbage we must NOT extrapolate a pixel->mm scale from nonsense
-# values — declining (manual review) is the honest outcome.
 EXIF_MIN_PPM = 1.0
 EXIF_MAX_PPM = 300.0
+CARD_MIN_PPM = 1.0
+CARD_MAX_PPM = 300.0
 
-# 35 mm film sensor width (the dimension used by 35mm-equivalent focal length).
 SENSOR_WIDTH_35MM = 36.0
 
-# VLM box sanity gate (no OCR, ~ms): a box pointing at a logo / the whole label
-# must be rejected before we trust its cap-height reading.
 BOX_MAX_AREA_FRACTION = 0.15
 BOX_MIN_AREA_FRACTION = 0.002
 BOX_MIN_WIDTH_PX = 10
@@ -70,32 +69,24 @@ BOX_ASPECT_MAX = 12.0
 BOX_MIN_GLYPHS = 3
 BOX_MAX_HEIGHT_REL_STDDEV = 0.4
 
-# A numeral stroke of [0.3, 10.0] x the legal requirement is the only range we
-# will report; anything outside is a wrong box / wrong region, not a real font.
 IMPLAUSIBLE_LOW_FACTOR = 0.3
 IMPLAUSIBLE_HIGH_FACTOR = 10.0
 
 _EXIF_EXIF_IFD = 0x8769
-_EXIF_FOCAL_LEN = 0x9205        # rational, mm
-_EXIF_SUBJECT_DISTANCE = 0x920A  # rational, metres
-_EXIF_FOCAL_35MM = 0xA405       # short, 35 mm-equivalent focal length
+_EXIF_FOCAL_LEN = 0x9205
+_EXIF_SUBJECT_DISTANCE = 0x920A
+_EXIF_FOCAL_35MM = 0xA405
 
 ImageOrPath = Union[str, np.ndarray]
 
 
 def _load_image(image: ImageOrPath) -> Optional[np.ndarray]:
-    """Accept an already-loaded BGR array or a path. Avoids double disk reads."""
     if isinstance(image, np.ndarray):
         return image
     return cv2.imread(str(image))
 
 
 def _ppm_from_focal(focal_35: float, distance_m: float, image_width: int) -> Optional[float]:
-    """Pure pixels-per-mm from 35 mm-equivalent focal length + subject distance.
-
-    Horizontal FOV from the 35 mm sensor width, then physical width at the
-    subject plane = 2 * D * tan(FOV/2).
-    """
     if not focal_35 or focal_35 <= 0 or not distance_m or distance_m <= 0:
         return None
     focal_35 = float(focal_35)
@@ -108,14 +99,7 @@ def _ppm_from_focal(focal_35: float, distance_m: float, image_width: int) -> Opt
     return float(ppm) if ppm > 0 else None
 
 
-def _exif_calibration_with_reason(
-    image_path: str,
-) -> Tuple[Optional[Tuple[float, Dict]], Optional[str]]:
-    """Pixels-per-mm from EXIF: horizontal FOV from 35 mm-equivalent focal
-    length and physical subject distance.
-
-    Returns ((ppm, info), None) on success or (None, reason) when unusable.
-    """
+def _exif_calibration_with_reason(image_path: str):
     try:
         with Image.open(image_path) as pil:
             if pil is None:
@@ -144,10 +128,7 @@ def _exif_calibration_with_reason(
         h, w = img.shape[:2]
         ppm = _ppm_from_focal(f35, float(dist_m), w)
         if ppm is None or not (EXIF_MIN_PPM <= ppm <= EXIF_MAX_PPM):
-            logger.warning(
-                f"EXIF calibration implausible (ppm={ppm}) — declining estimate "
-                f"for {image_path}"
-            )
+            logger.warning(f"EXIF calibration implausible (ppm={ppm}) — declining estimate for {image_path}")
             return None, f"exif_implausible(ppm={None if ppm is None else round(ppm, 2)})"
         info = {
             "focal_35mm_equiv": round(f35, 2),
@@ -162,82 +143,37 @@ def _exif_calibration_with_reason(
         return None, "exif_parse_error"
 
 
-def _exif_calibration(image_path: str) -> Optional[Tuple[float, Dict]]:
-    """Backwards-compatible wrapper around _exif_calibration_with_reason."""
+def _exif_calibration(image_path: str):
     result, _reason = _exif_calibration_with_reason(image_path)
     return result
 
 
 class FontMeasurementService:
-    def compute_ppm_from_barcode(
-        self, image_path: str
-    ) -> Optional[Tuple[float, Tuple[float, float, float, float]]]:
-        try:
-            img = cv2.imread(image_path)
-            if img is None:
-                return None
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            detector = cv2.barcode.BarcodeDetector()
-            retval, _decoded, _dtype, points = detector.detectAndDecodeWithType(gray)
-            if retval and len(points) > 0:
-                pts = points[0].astype(np.float32)
-                # A real 2D barcode/1D barcode detection yields >= 4 corner
-                # points forming a convex quadrilateral; fewer/non-convex
-                # detections are false positives we refused to scale from.
-                if len(pts) < 4:
-                    return None
-                hull = cv2.convexHull(pts)
-                if hull is None or len(hull) < 4:
-                    return None
-                x1 = float(min(pts[:, 0]))
-                y1 = float(min(pts[:, 1]))
-                x2 = float(max(pts[:, 0]))
-                y2 = float(max(pts[:, 1]))
-                width_px = x2 - x1
-                if width_px > 0:
-                    ppm = width_px / BARCODE_WIDTH_MM
-                    return ppm, (x1, y1, x2, y2)
+    def compute_ppm_from_barcode(self, image_path: str):
+        img = cv2.imread(str(image_path))
+        if img is None:
             return None
-        except Exception as e:
-            logger.error(f"Barcode detection failed: {e}")
+        return _scan_barcode(img)
+
+    def compute_ppm_from_credit_card(self, image_path: str):
+        img = cv2.imread(str(image_path))
+        if img is None:
             return None
-
-    def calibrate(
-        self, image_path: str
-    ) -> Optional[Dict]:
-        """Return a calibration dict with ppm + source + uncertainty factor."""
-        barcode = self.compute_ppm_from_barcode(image_path)
-        if barcode:
-            ppm, bbox = barcode
-            return {
-                "calibration": "barcode",
-                "ppm": float(ppm),
-                "uncertainty_factor": BARCODE_UNCERTAINTY,
-                "bbox": bbox,
-            }
-
-        exif = _exif_calibration(image_path)
-        if exif:
-            ppm, info = exif
-            return {
-                "calibration": "exif",
-                "ppm": float(ppm),
-                "uncertainty_factor": EXIF_UNCERTAINTY,
-                "info": info,
-            }
-
+        card = detect_credit_card(img)
+        if card:
+            ppm, bbox, _info = card
+            return ppm, bbox
         return None
+
+    def calibrate(self, image_path: str) -> Optional[Dict]:
+        calibrator = ScaleCalibrator()
+        return calibrator.calibrate(image_path)
+        # Fallbacks (barcode/exif) are handled inside ScaleCalibrator.
 
     def _calibration_rejected_reason(self, image_path: str) -> str:
         if not os.path.exists(image_path):
             return "image_unreadable"
-        reasons = []
-        if self.compute_ppm_from_barcode(image_path) is None:
-            reasons.append("barcode_not_detected")
-        _exif_result, exif_reason = _exif_calibration_with_reason(image_path)
-        if _exif_result is None:
-            reasons.append(exif_reason or "exif_unavailable")
-        return "; ".join(dict.fromkeys(reasons)) or "calibration_failed"
+        return calibration_rejected_reason(image_path)
 
     def _normalize_box(
         self,
@@ -246,12 +182,6 @@ class FontMeasurementService:
         img_h: int,
         box_format: str = "normalized",
     ) -> Tuple[int, int, int, int]:
-        """Accept box as [x1, y1, x2, y2].
-
-        box_format:
-          "normalized" -> 0-1000 (Qwen/VLM object-grounding convention)
-          "px"         -> absolute pixels
-        """
         x1, y1, x2, y2 = (float(v) for v in box[:4])
         if box_format == "px":
             pass
@@ -267,10 +197,7 @@ class FontMeasurementService:
         yi2 = min(img_h, yi2 + pad)
         return xi1, yi1, xi2, yi2
 
-    def _glyph_heights_in_region(
-        self, image: ImageOrPath, box: Tuple[int, int, int, int]
-    ) -> Optional[List[int]]:
-        """Capital/digit stroke heights inside a cropped text region."""
+    def _glyph_heights_in_region(self, image: ImageOrPath, box: Tuple[int, int, int, int]) -> Optional[List[int]]:
         try:
             img = _load_image(image)
             if img is None:
@@ -282,13 +209,7 @@ class FontMeasurementService:
             region_h, region_w = y2 - y1, x2 - x1
             gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
             gray = cv2.bilateralFilter(gray, 5, 30, 30)
-            _, binary = cv2.threshold(
-                gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-            )
-            # Light open drops specks; no close so separate glyphs stay separate.
-            # A fixed (2,2) kernel erodes ~1px-receiving strokes and SHATTERS
-            # small glyphs (a 10px digit becomes fragments), so we only open
-            # regions big enough that a 1px erosion is harmless.
+            _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
             if region_h >= 40:
                 kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
                 binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
@@ -299,7 +220,6 @@ class FontMeasurementService:
                 area = stats[i, cv2.CC_STAT_AREA]
                 h = stats[i, cv2.CC_STAT_HEIGHT]
                 wid = stats[i, cv2.CC_STAT_WIDTH]
-                # glyph-like strokes within the region's vertical band
                 if (
                     region_h * 0.06 <= h <= region_h
                     and 1 <= wid <= region_w * 0.8
@@ -313,10 +233,7 @@ class FontMeasurementService:
             return None
 
     @staticmethod
-    def _box_geometry_ok(
-        box: Tuple[int, int, int, int], img_w: int, img_h: int
-    ) -> Tuple[bool, Optional[str]]:
-        """Size / area / aspect sanity for a VLM text box (no glyphs needed)."""
+    def _box_geometry_ok(box: Tuple[int, int, int, int], img_w: int, img_h: int) -> Tuple[bool, Optional[str]]:
         x1, y1, x2, y2 = box
         bw, bh = x2 - x1, y2 - y1
         if bw < BOX_MIN_WIDTH_PX or bh < BOX_MIN_HEIGHT_PX:
@@ -332,13 +249,7 @@ class FontMeasurementService:
         return True, None
 
     @staticmethod
-    def _box_is_plausible(
-        box: Tuple[int, int, int, int], img_w: int, img_h: int, heights_px: List[int]
-    ) -> Tuple[bool, Optional[str]]:
-        """Geometric + glyph-cluster sanity check for a VLM text box.
-
-        Returns (ok, reason). A logo / whole-label / multi-line-region box is
-        rejected without another model call or any OCR dependency."""
+    def _box_is_plausible(box: Tuple[int, int, int, int], img_w: int, img_h: int, heights_px: List[int]) -> Tuple[bool, Optional[str]]:
         ok, reason = FontMeasurementService._box_geometry_ok(box, img_w, img_h)
         if not ok:
             return False, reason
@@ -351,11 +262,6 @@ class FontMeasurementService:
         return True, None
 
     def cap_height_px(self, heights: List[int]) -> int:
-        """Height of the dominant capital/digit stroke cluster.
-
-        Bins are sized relative to the median stroke height (about 10%) instead
-        of a fixed 2 px, so the estimate stays accurate at low resolutions
-        where 1 mm may be only ~5 px tall."""
         if not heights:
             return 0
         bin_w = max(1, int(statistics.median(heights) // 10))
@@ -365,13 +271,7 @@ class FontMeasurementService:
         majority = max(bins.values(), key=len)
         return int(round(statistics.median(majority)))
 
-    def _text_component_heights(
-        self,
-        image: ImageOrPath,
-        exclude_bbox: Optional[Tuple[float, float, float, float]] = None,
-    ) -> Optional[List[int]]:
-        """Heuristic fallback: median height of text components in the lower
-        half of the image, excluding the barcode region."""
+    def _text_component_heights(self, image: ImageOrPath, exclude_bbox=None) -> Optional[List[int]]:
         try:
             img = _load_image(image)
             if img is None:
@@ -380,9 +280,7 @@ class FontMeasurementService:
             lower = img[int(h * 0.5):, :]
             off_y = int(h * 0.5)
             gray = cv2.cvtColor(lower, cv2.COLOR_BGR2GRAY)
-            _, binary = cv2.threshold(
-                gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-            )
+            _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
             if exclude_bbox:
                 x1, y1, x2, y2 = [int(v) for v in exclude_bbox]
                 x1 = max(0, x1 - 10)
@@ -428,17 +326,9 @@ class FontMeasurementService:
         required_mm: Optional[float] = None,
         text_box: Optional[List[float]] = None,
     ) -> Optional[Dict]:
-        """Measure font height (mm) with an honest, traceable calibration.
-
-        text_box: VLM-localized [x1, y1, x2, y2] of the declaration text, in
-                  0-1000 normalized or absolute pixels. When provided and
-                  plausible, the cap-height method is used.
-        """
         cal = self.calibrate(image_path)
         if not cal:
-            return self._cannot_measure(
-                required_mm, self._calibration_rejected_reason(image_path)
-            )
+            return self._cannot_measure(required_mm, self._calibration_rejected_reason(image_path))
 
         ppm = cal["ppm"]
         uncertainty_factor = cal["uncertainty_factor"]
@@ -468,13 +358,9 @@ class FontMeasurementService:
                         heights_px = None
 
         if heights_px is None:
-            heights_px = self._text_component_heights(
-                image_path, exclude_bbox=cal.get("bbox")
-            )
+            heights_px = self._text_component_heights(image_path, exclude_bbox=cal.get("bbox"))
             if not heights_px:
-                return self._cannot_measure(
-                    required_mm, "no_text_components_found"
-                )
+                return self._cannot_measure(required_mm, "no_text_components_found")
 
         if method == "cap_height":
             height_px = self.cap_height_px(heights_px)
@@ -513,13 +399,97 @@ class FontMeasurementService:
             return result
 
         if method != "cap_height":
-            # The lower-half heuristic is unvalidated on our dataset and
-            # consistently underestimates — informational value only.
             result["status"] = "REVIEW_REQUIRED"
             return result
 
         lower = measured_mm - uncertainty
         if lower >= required_mm:
+            status = "COMPLIANT"
+        elif measured_mm + uncertainty < required_mm:
+            status = "POTENTIAL_VIOLATION"
+        else:
+            status = "REVIEW_REQUIRED"
+        result["status"] = status
+        return result
+
+    def measure_from_tokens(
+        self,
+        image_path: str,
+        tokens: List[Dict],
+        required_mm: Optional[float] = None,
+        match_substrings: Optional[List[str]] = None,
+    ) -> Optional[Dict]:
+        """Measure font size in mm from OCR token boxes (new pipeline).
+
+        tokens: [{"text": str, "box": [x1,y1,x2,y2] (px, axis-aligned)}].
+        When match_substrings is given only tokens whose text contains one of
+        them (case-insensitive) are measured; otherwise the median of all
+        token heights is used.
+        """
+        cal = self.calibrate(image_path)
+        if not cal:
+            return self._cannot_measure(required_mm, self._calibration_rejected_reason(image_path))
+
+        ppm = cal["ppm"]
+        uncertainty_factor = cal["uncertainty_factor"]
+
+        matched = []
+        lower = [s.lower() for s in (match_substrings or [])]
+        for token in tokens or []:
+            text = str(token.get("text", "") or "").strip()
+            box = token.get("box")
+            if not text or not box or len(box) != 4:
+                continue
+            x1, y1, x2, y2 = (float(v) for v in box[:4])
+            h_px = y2 - y1
+            if h_px < 2:
+                continue
+            if lower:
+                if not any(s in text.lower() for s in lower):
+                    continue
+            matched.append((text, h_px, box))
+
+        if not matched:
+            return self._cannot_measure(required_mm, "no_matching_tokens")
+
+        heights_px = [h for _t, h, _b in matched]
+        height_px = int(round(statistics.median(heights_px)))
+        measured_mm = height_px / ppm
+        uncertainty = measured_mm * uncertainty_factor
+
+        result = {
+            "measured_mm": round(measured_mm, 2),
+            "uncertainty": round(uncertainty, 2),
+            "required_mm": required_mm,
+            "calibration": cal["calibration"],
+            "ppm": round(ppm, 2),
+            "method": "ocr_token_height",
+            "glyph_count": len(matched),
+            "height_px": height_px,
+            "tokens_measured": [t for t, _h, _b in matched],
+        }
+        if cal.get("info"):
+            result["calibration_info"] = cal["info"]
+        if cal.get("bbox"):
+            result["calibration_bbox"] = [int(v) for v in cal["bbox"]]
+
+        if required_mm is None:
+            result["status"] = "REVIEW_REQUIRED"
+            return result
+
+        low = IMPLAUSIBLE_LOW_FACTOR * required_mm
+        high = IMPLAUSIBLE_HIGH_FACTOR * required_mm
+        if not (low <= measured_mm <= high):
+            result["status"] = "REVIEW_REQUIRED"
+            result["implausible"] = True
+            return result
+
+        if "credit_card" not in cal["calibration"] and "barcode" not in cal["calibration"]:
+            result["status"] = "REVIEW_REQUIRED"
+            return result
+
+        lower_bound = measured_mm - uncertainty
+        if lower_bound >= required_mm:
             status = "COMPLIANT"
         elif measured_mm + uncertainty < required_mm:
             status = "POTENTIAL_VIOLATION"

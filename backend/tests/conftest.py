@@ -14,7 +14,7 @@ os.environ["ALLOWED_ORIGINS"] = "http://localhost:3000"
 class FakeOCR:
     """Deterministic stand-in for the Qwen vision model."""
 
-    def __init__(self, result=None):
+    def __init__(self, result=None, verify_currency=None):
         self.result = result or {
             "mrp": "MRP Rs. 100/-",
             "usp": "USP Rs. 0.50 per g",
@@ -27,9 +27,13 @@ class FakeOCR:
             "dimensions": "",
             "edible": "yes",
         }
+        self.verify_currency = verify_currency
 
     def extract_structured(self, image_path):
         return dict(self.result)
+
+    def verify_currency_symbol(self, image_path, value):
+        return self.verify_currency
 
 
 @pytest.fixture(scope="session")

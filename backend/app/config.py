@@ -36,6 +36,33 @@ OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 QWN_MODEL = os.getenv("QWN_MODEL", "qwen2.5vl:7b")
 OCR_TIMEOUT_SECONDS = int(os.getenv("OCR_TIMEOUT_SECONDS", "180"))
 
+# New fast pipeline (OCR + lightweight LLM classifier)
+# OCR engine: "auto" | "rapidocr" | "paddleocr" | "vlm"
+OCR_ENGINE = os.getenv("OCR_ENGINE", "auto")
+OCR_LANG = os.getenv("OCR_LANG", "en")
+# Lightweight text-only classifier (already pulled locally, ~2GB Q4)
+FIELD_CLASSIFIER_MODEL = os.getenv("FIELD_CLASSIFIER_MODEL", "qwen2.5:3b")
+FIELD_CLASSIFIER_ENABLED = os.getenv("FIELD_CLASSIFIER_ENABLED", "1") == "1"
+# Resource-adaptive cascade: when confidence is low AND enabled, the pipeline
+# escalates hard images to a vision-language model rescue path.
+# 0 = pure CPU (frugal/offline demo), 1 = VLM rescue enabled (needs GPU).
+VLM_RESCUE_ENABLED = os.getenv("VLM_RESCUE_ENABLED", "0") == "1"
+VLM_RESCUE_MODEL = os.getenv("VLM_RESCUE_MODEL", "qwen2.5vl:7b")
+VLM_RESCUE_CONFIDENCE_THRESHOLD = float(os.getenv("VLM_RESCUE_CONFIDENCE_THRESHOLD", "55"))
+OCR_ENHANCE_ENABLED = os.getenv("OCR_ENHANCE_ENABLED", "1") == "1"
+OCR_ENHANCE_MAX_SIDE = int(os.getenv("OCR_ENHANCE_MAX_SIDE", "1920"))
+# CPU-only multi-pass OCR escalation: on-demand extra preprocessing
+# variants (grayscale / Otsu / inverted / CLAHE / 2x) whose detection boxes
+# are fused back into the token stream. Triggers only when a critical
+# statutory digit field (mrp / mfg / expiry) came back empty from the single
+# pass. Pane-zoom (per-region 3x + binarize re-read) helps one in ~7
+# products but is expensive, so it defaults off.
+OCR_MULTI_PASS_ENABLED = os.getenv("OCR_MULTI_PASS_ENABLED", "1") == "1"
+OCR_MULTI_PASS_ON_FAIL = os.getenv("OCR_MULTI_PASS_ON_FAIL", "1") == "1"
+OCR_PANE_ZOOM_ENABLED = os.getenv("OCR_PANE_ZOOM_ENABLED", "0") == "1"
+# Calibration: "auto" (credit-card -> barcode -> exif) | "credit_card" | "barcode" | "exif"
+FONT_CALIBRATION = os.getenv("FONT_CALIBRATION", "auto")
+
 # CORS
 ALLOWED_ORIGINS = [
     o.strip()

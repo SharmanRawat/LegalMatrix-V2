@@ -18,9 +18,9 @@ def save_inspection(inspection: dict, db_path=None) -> str:
                 "INSERT INTO inspections "
                 "(id, product_name, manufacturer, status, compliance_score, "
                 " passed_count, total_rules, declarations_json, missing_json, "
-                " violations_json, misleading_json, evidence_hash, images_count, "
+                " violations_json, misleading_json, meta_json, evidence_hash, images_count, "
                 " model, user_id, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     inspection["id"],
                     inspection.get("product_name") or None,
@@ -33,6 +33,7 @@ def save_inspection(inspection: dict, db_path=None) -> str:
                     json.dumps(inspection.get("missing_declarations", [])),
                     json.dumps(inspection.get("violations", [])),
                     json.dumps(inspection.get("misleading_checks", [])),
+                    json.dumps(inspection.get("meta", {})),
                     inspection.get("evidence_hash", ""),
                     inspection.get("images_count", 0),
                     inspection.get("model", ""),
@@ -60,6 +61,47 @@ def add_inspection_image(inspection_id: str, filename: str, original_name: str, 
         conn.close()
 
 
+def update_inspection_overrides(
+    inspection_id: str,
+    declarations: dict,
+    status: str,
+    compliance: dict,
+    missing_declarations: list,
+    misleading_checks: list,
+    meta: dict,
+    db_path=None,
+) -> None:
+    """Persist corrected declarations after a manual override, re-evaluating
+    status / compliance in the service layer first."""
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            conn.execute(
+                "UPDATE inspections SET "
+                " product_name = ?, manufacturer = ?, status = ?, "
+                " compliance_score = ?, passed_count = ?, total_rules = ?, "
+                " declarations_json = ?, missing_json = ?, violations_json = ?, "
+                " misleading_json = ?, meta_json = ? "
+                "WHERE id = ?",
+                (
+                    (declarations.get("product_name") or None),
+                    (declarations.get("manufacturer") or None),
+                    status,
+                    compliance.get("compliance_score", 0),
+                    compliance.get("passed_count", 0),
+                    compliance.get("total_rules", 0),
+                    json.dumps(declarations, ensure_ascii=False),
+                    json.dumps(missing_declarations, ensure_ascii=False),
+                    json.dumps(compliance.get("violations", []), ensure_ascii=False),
+                    json.dumps(misleading_checks, ensure_ascii=False),
+                    json.dumps(meta, ensure_ascii=False),
+                    inspection_id,
+                ),
+            )
+    finally:
+        conn.close()
+
+
 def _row_to_dict(row) -> dict:
     d = dict(row)
     d["inspection_id"] = d["id"]
@@ -67,6 +109,9 @@ def _row_to_dict(row) -> dict:
     d["missing_declarations"] = json.loads(d.pop("missing_json") or "[]")
     d["violations"] = json.loads(d.pop("violations_json") or "[]")
     d["misleading_checks"] = json.loads(d.pop("misleading_json") or "[]")
+    if "meta_json" in d:
+        meta = json.loads(d.pop("meta_json") or "{}")
+        d.update(meta)
     return d
 
 

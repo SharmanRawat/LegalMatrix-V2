@@ -60,3 +60,35 @@ export function apiError(err: unknown, fallback = 'Request failed'): string {
   if (err instanceof Error && err.message) return err.message
   return fallback
 }
+
+export interface RadarAxis {
+  axis: string
+  score: number | null
+  weight: number
+}
+
+export interface RadarResult {
+  overall: number
+  grade: string
+  grade_label: string
+  axes: RadarAxis[]
+}
+
+export interface HeatmapInfo {
+  filename: string
+  image_index: number
+  field_boxes: Record<string, [number, number, number, number]>
+  calibration_box: [number, number, number, number] | null
+}
+
+export async function downloadBlob(url: string, filename: string): Promise<void> {
+  const resp = await api.get(url, { responseType: 'blob', timeout: 600000 })
+  const blobUrl = window.URL.createObjectURL(new Blob([resp.data]))
+  const a = document.createElement('a')
+  a.href = blobUrl
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  window.URL.revokeObjectURL(blobUrl)
+  a.remove()
+}

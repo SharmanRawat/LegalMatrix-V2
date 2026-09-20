@@ -43,11 +43,26 @@ next-env.d.ts
 # python
 __pycache__/
 *.pyc
+*.pyo
 .pytest_cache/
 backend/venv/
+backend/.venv/
+.venv/
 
-# docker runtime data
+# docker runtime data (sqlite db + evidence photos + heatmaps are local-only)
 backend/data/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# evidence / runtime outputs (never commit - large + personal data)
+**/evidence/
+**/heatmaps/
+
+# audit caches
+/tmp/pipeline_audit_*.json
+pipeline_audit_out/
 
 # frontend build + deps (nested under frontend/)
 frontend/node_modules/
@@ -56,9 +71,22 @@ frontend/.out/
 frontend/build/
 
 # sample product-label photos (large, copyrighted) — excluded
+# Team: put your local label photos in ./images/ (gitignored) or point
+# scripts at E:\SIH_installation_files\images (/mnt/e/SIH_installation_files/images under WSL).
 images/
+samples/
+*.jpg.bak
 /image36_2.jpg
 backend/image36_2.jpg
 
 # dev artifact
 *.bak
+*.tmp
+*.log
+
+# secrets - NEVER commit tokens, .env, or service keys
+.env*
+!.env.example
+*.pem
+*.key
+secrets.json

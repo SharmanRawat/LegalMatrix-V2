@@ -1,13 +1,16 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import {
   Camera, Upload, Shield, CheckCircle, AlertCircle,
-  Clock, X, Download, Scan, AlertTriangle,
+  Clock, X, Download, Scan, AlertTriangle, Pencil, Save,
 } from 'lucide-react'
 import toast, { Toaster } from 'react-hot-toast'
 import Navbar from '@/app/components/Navbar'
-import { api, apiError } from '@/app/lib/api'
+import RadarChart from '@/app/components/RadarChart'
+import { api, apiError, downloadBlob, getUser } from '@/app/lib/api'
+import type { HeatmapInfo, RadarResult, SessionUser } from '@/app/lib/api'
 
 interface Violation {
   rule_id: string
@@ -43,6 +46,14 @@ interface InspectionResult {
     expiry_date: string | null
     consumer_care: string | null
     dimensions: string | null
+    edible: string | null
+  }
+  manual_overrides?: Record<string, { original: string; corrected: string }>
+  extraction_confidence?: {
+    overall: number
+    coverage_ratio: number
+    fields_present: number
+    fields_required: number
   }
   missing_declarations: string[]
   compliance_score: number
@@ -63,6 +74,9 @@ interface InspectionResult {
     implausible?: boolean
     image_index?: number | null
   } | null
+  compliance_radar?: RadarResult | null
+  grade?: string
+  heatmaps?: HeatmapInfo[]
   evidence?: {
     hash: string
   }
@@ -76,9 +90,16 @@ export default function Home() {
   const [elapsed, setElapsed] = useState(0)
   const [result, setResult] = useState<InspectionResult | null>(null)
   const [downloadingPdf, setDownloadingPdf] = useState(false)
+  const [downloadingCert, setDownloadingCert] = useState(false)
+  const [heatmapUrls, setHeatmapUrls] = useState<string[]>([])
   const [cameraActive, setCameraActive] = useState(false)
   const [sameProduct, setSameProduct] = useState(false)
   const [viewingPreview, setViewingPreview] = useState<number | null>(null)
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [editing, setEditing] = useState<Record<string, boolean>>({})
+  const [savingFields, setSavingFields] = useState<Record<string, boolean>>({})
+  const user: SessionUser | null = getUser()
+  const canEdit = !!user && (user.role === 'ADMIN' || user.role === 'INSPECTOR')
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -218,6 +239,9 @@ export default function Home() {
 
     setLoading(true)
     setResult(null)
+    setDrafts({})
+    setEditing({})
+    setSavingFields({})
     setElapsed(0)
 
     if (timerRef.current) clearInterval(timerRef.current)
@@ -230,6 +254,22 @@ export default function Home() {
       const response = await api.post('/api/inspect', formData, { timeout: 600000 })
       setResult(response.data)
       toast.success('Inspection completed!')
+      if (response.data?.inspection_id && response.data?.heatmaps?.length) {
+        const urls = await Promise.all(
+          (response.data.heatmaps as HeatmapInfo[]).map(async (h) => {
+            try {
+              const resp = await api.get(`/api/inspect/${response.data.inspection_id}/heatmap/${h.image_index}`, {
+                responseType: 'blob',
+                timeout: 60000,
+              })
+              return window.URL.createObjectURL(resp.data)
+            } catch {
+              return ''
+            }
+          }),
+        )
+        setHeatmapUrls(urls)
+      }
     } catch (error: unknown) {
       console.error('Error:', error)
       const msg =
@@ -240,6 +280,68 @@ export default function Home() {
     } finally {
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
       setLoading(false)
+    }
+  }
+
+  const startEdit = (key: string) => {
+    setEditing((prev) => ({ ...prev, [key]: true }))
+    setDrafts((prev) => ({
+      ...prev,
+      [key]: (result?.declarations as Record<string, string | null> | undefined)?.[key] ?? '',
+    }))
+  }
+
+  const cancelEdit = (key: string) => {
+    setEditing((prev) => ({ ...prev, [key]: false }))
+    setDrafts((prev) => {
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+  }
+
+  const saveField = async (key: string) => {
+    if (!result) return
+    const value = (drafts[key] ?? '').trim()
+    const current = (result.declarations as Record<string, string | null>)[key] ?? ''
+    if (value === (current ?? '')) {
+      cancelEdit(key)
+      return
+    }
+    setSavingFields((prev) => ({ ...prev, [key]: true }))
+    try {
+      const { data: updated } = await api.patch(`/api/inspect/${result.inspection_id}`, {
+        overrides: { [key]: value },
+      })
+      setResult((prev) =>
+        prev
+          ? {
+              ...prev,
+              declarations: updated.declarations ?? prev.declarations,
+              missing_declarations: updated.missing_declarations ?? prev.missing_declarations,
+              status: updated.status ?? prev.status,
+              compliance_score: updated.compliance_score ?? prev.compliance_score,
+              passed_count: updated.passed_count ?? prev.passed_count,
+              total_rules: updated.total_rules ?? prev.total_rules,
+              violations: updated.violations ?? prev.violations,
+              misleading_checks: updated.misleading_checks ?? prev.misleading_checks,
+              compliance_radar: updated.compliance_radar ?? prev.compliance_radar,
+              grade: updated.grade ?? prev.grade,
+              manual_overrides: updated.manual_overrides ?? prev.manual_overrides,
+            }
+          : prev,
+      )
+      setEditing((prev) => ({ ...prev, [key]: false }))
+      setDrafts((prev) => {
+        const next = { ...prev }
+        delete next[key]
+        return next
+      })
+      toast.success(`${FIELD_LABELS[key] ?? key} corrected — score recalculated`)
+    } catch (err) {
+      toast.error(apiError(err, 'Failed to save correction'))
+    } finally {
+      setSavingFields((prev) => ({ ...prev, [key]: false }))
     }
   }
 
@@ -267,6 +369,23 @@ export default function Home() {
       toast.error('Failed to download PDF report')
     } finally {
       setDownloadingPdf(false)
+    }
+  }
+
+  const handleDownloadCertificate = async () => {
+    if (!result) return
+    setDownloadingCert(true)
+    try {
+      await downloadBlob(
+        `/api/inspect/${result.inspection_id}/certificate`,
+        `LegalMatrix-Certificate-${result.inspection_id}.pdf`,
+      )
+      toast.success('Certificate downloaded!')
+    } catch (err) {
+      console.error('Certificate download failed:', err)
+      toast.error('Failed to download certificate')
+    } finally {
+      setDownloadingCert(false)
     }
   }
 
@@ -513,21 +632,170 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Extracted Declarations */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <h3 className="font-semibold text-gray-800 mb-4">Extracted Declarations</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {Object.entries(result.declarations ?? {}).map(([key, value]) => (
-                <div key={key} className="flex items-start gap-2 p-2 bg-gray-50 rounded-lg">
-                  <span className="text-sm font-medium text-gray-600 capitalize min-w-[120px]">
-                    {FIELD_LABELS[key] ?? key.replace(/_/g, ' ')}:
-                  </span>
-                  <span className={`text-sm ${value ? 'text-gray-900' : 'text-red-400 italic'}`}>
-                    {value || 'Not detected'}
-                  </span>
-                </div>
-              ))}
+          {/* Compliance Radar */}
+          {result.compliance_radar && (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+              <h3 className="font-semibold text-gray-800 mb-4">Compliance Radar</h3>
+              <RadarChart radar={result.compliance_radar} />
+              <p className="mt-3 text-xs text-gray-400 leading-relaxed">
+                Axes weighed by legal impact (declarations 30%, pricing 20%, dates 10%,
+                consumer care 10%, font size 20%, readability 10%). The font-size axis is
+                excluded when no calibration reference (credit card / barcode) is present.
+              </p>
             </div>
+          )}
+
+          {/* Compliance heat-map overlay */}
+          {result.heatmaps && result.heatmaps.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+              <h3 className="font-semibold text-gray-800 mb-1">Compliance Heat-Map</h3>
+              <p className="text-xs text-gray-500 mb-4">
+                Verdicts drawn back onto the photo — green = compliant, red = violation,
+                yellow = low confidence, cyan = calibration reference.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {result.heatmaps.map((h, i) => (
+                  <figure key={i} className="border border-gray-200 rounded-lg overflow-hidden bg-gray-50">
+                    {heatmapUrls[i] ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={heatmapUrls[i]}
+                        alt={`Compliance heat-map photo ${h.image_index + 1}`}
+                        className="w-full object-contain bg-white"
+                      />
+                    ) : (
+                      <div className="w-full h-48 flex items-center justify-center text-gray-400 text-sm">
+                        Heat-map unavailable
+                      </div>
+                    )}
+                    <figcaption className="px-3 py-2 text-xs text-gray-500 bg-white border-t border-gray-100">
+                      Photo {h.image_index + 1} heat-map
+                    </figcaption>
+                  </figure>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Extracted Declarations (editable — corrections re-score instantly) */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <h3 className="font-semibold text-gray-800 mb-1">Extracted Declarations</h3>
+            {result.extraction_confidence != null && (
+              <div className="mb-3 flex items-center gap-2 text-xs">
+                <span className="font-medium text-gray-500">Extraction confidence</span>
+                <span
+                  className={`font-bold ${
+                    result.extraction_confidence.overall >= 70
+                      ? 'text-green-600'
+                      : result.extraction_confidence.overall >= 40
+                        ? 'text-yellow-600'
+                        : 'text-red-600'
+                  }`}
+                >
+                  {result.extraction_confidence.overall}%
+                </span>
+                <span className="text-gray-400">
+                  ({result.extraction_confidence.fields_present}/
+                  {result.extraction_confidence.fields_required} required fields)
+                </span>
+              </div>
+            )}
+            {canEdit ? (
+              <p className="text-xs text-gray-500 mb-3">
+                Click the pencil icon to correct a misread value. Saving re-runs the
+                compliance check and score immediately, and the correction is stored
+                with the inspection (original AI value kept for audit).
+              </p>
+            ) : (
+              <p className="text-xs text-gray-500 mb-3">
+                Sign in as ADMIN / INSPECTOR to correct misread values.
+              </p>
+            )}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {Object.entries(result.declarations ?? {}).map(([key, value]) => {
+                const overridden = result.manual_overrides?.[key]
+                const isEditing = !!(editing[key] && canEdit)
+                const isSaving = !!savingFields[key]
+                return (
+                  <div
+                    key={key}
+                    className={`flex items-start gap-2 p-2 bg-gray-50 rounded-lg ${
+                      overridden ? 'ring-1 ring-amber-300' : ''
+                    }`}
+                  >
+                    <div className="min-w-[120px] shrink-0">
+                      <span className="text-sm font-medium text-gray-600 capitalize block">
+                        {FIELD_LABELS[key] ?? key.replace(/_/g, ' ')}:
+                      </span>
+                      {overridden && (
+                        <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 rounded px-1 py-0.5 inline-block mt-0.5">
+                          CORRECTED
+                        </span>
+                      )}
+                    </div>
+                    {isEditing ? (
+                      <div className="flex-1">
+                        <input
+                          value={drafts[key] ?? ''}
+                          onChange={(e) => setDrafts((prev) => ({ ...prev, [key]: e.target.value }))}
+                          disabled={isSaving}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') saveField(key)
+                            if (e.key === 'Escape') cancelEdit(key)
+                          }}
+                          placeholder={value || 'Not detected — type a value'}
+                          className="w-full text-sm px-2 py-1 border border-gray-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        />
+                        <div className="flex gap-2 mt-1">
+                          <button
+                            onClick={() => saveField(key)}
+                            disabled={isSaving}
+                            className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                          >
+                            <Save className="w-3 h-3" /> {isSaving ? 'Saving…' : 'Save'}
+                          </button>
+                          <button
+                            onClick={() => cancelEdit(key)}
+                            disabled={isSaving}
+                            className="text-xs font-semibold px-2 py-1 rounded bg-white border border-gray-300 text-gray-600 hover:bg-gray-100"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex-1 min-w-0">
+                        <span className={`text-sm block break-words ${value ? 'text-gray-900' : 'text-red-400 italic'}`}>
+                          {value || 'Not detected'}
+                        </span>
+                        {overridden && (
+                          <p className="text-[11px] text-gray-400 mt-0.5">
+                            Original (AI): &quot;{overridden.original || ''}&quot;
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    {canEdit && !isEditing && (
+                      <button
+                        onClick={() => startEdit(key)}
+                        title={`Correct ${FIELD_LABELS[key] ?? key}`}
+                        className="shrink-0 p-1.5 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            <p className="mt-3 text-xs text-gray-500">
+              Corrections save automatically to inspection{' '}
+              <span className="font-mono">{result.inspection_id}</span> —{' '}
+              <Link href={`/inspection/${result.inspection_id}`} className="text-blue-600 hover:underline font-medium">
+                open the full report
+              </Link>{' '}
+              for evidence photos, heat-maps and exports.
+            </p>
           </div>
 
           {/* Rule Violations */}
@@ -689,11 +957,32 @@ export default function Home() {
               )}
             </button>
             <button
+              onClick={handleDownloadCertificate}
+              disabled={downloadingCert}
+              className="flex-1 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2 font-semibold"
+            >
+              {downloadingCert ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+                  Generating Certificate...
+                </>
+              ) : (
+                <>
+                  <Shield className="w-4 h-4" />
+                  Certificate
+                </>
+              )}
+            </button>
+            <button
               onClick={() => {
                 setResult(null)
                 setSelectedImages([])
                 setImagePreviews([])
+                setDrafts({})
+                setEditing({})
+                setSavingFields({})
                 setSameProduct(false)
+                setHeatmapUrls([])
               }}
               className="flex-1 py-3 text-sm text-gray-600 hover:text-gray-800 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
             >

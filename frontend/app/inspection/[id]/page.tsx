@@ -5,10 +5,13 @@ import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import {
   CheckCircle, AlertCircle, FileJson, FileDown, ArrowLeft, AlertTriangle,
+  Pencil, Save,
 } from 'lucide-react'
 import toast, { Toaster } from 'react-hot-toast'
 import Navbar from '@/app/components/Navbar'
-import { api, apiError, getUser } from '@/app/lib/api'
+import RadarChart from '@/app/components/RadarChart'
+import { api, apiError, getUser, downloadBlob } from '@/app/lib/api'
+import type { HeatmapInfo, RadarResult, SessionUser } from '@/app/lib/api'
 
 interface Violation {
   rule_id: string
@@ -33,6 +36,29 @@ interface EvidenceImage {
   original_name: string
 }
 
+interface ExtractionConfidence {
+  overall: number
+  coverage_ratio: number
+  fields_present: number
+  fields_required: number
+  by_field: Record<string, number>
+}
+
+interface FieldEvidence {
+  source: string
+  text: string
+  image_index: number | null
+}
+
+interface ManualOverride {
+  [field: string]: {
+    original: string
+    corrected: string
+    by_user_id?: number | null
+    at?: string
+  }
+}
+
 interface InspectionDetail {
   inspection_id: string
   timestamp: string
@@ -47,6 +73,7 @@ interface InspectionDetail {
   total_rules: number
   violations: Violation[]
   misleading_checks?: ConsistencyCheck[]
+  manual_overrides?: ManualOverride
   font_measurement?: {
     status: string
     measured_mm: number | null
@@ -60,7 +87,12 @@ interface InspectionDetail {
     implausible?: boolean
     image_index?: number | null
   } | null
+  compliance_radar?: RadarResult | null
+  grade?: string
+  heatmaps?: HeatmapInfo[]
   evidence?: { hash: string; images?: EvidenceImage[] }
+  field_evidence?: Record<string, FieldEvidence>
+  extraction_confidence?: ExtractionConfidence
 }
 
 const statusColor: Record<string, string> = {
@@ -103,7 +135,53 @@ export default function InspectionDetailPage() {
   const router = useRouter()
   const [data, setData] = useState<InspectionDetail | null>(null)
   const [images, setImages] = useState<{ url: string; name: string }[]>([])
+  const [heatmapUrls, setHeatmapUrls] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [editing, setEditing] = useState<Record<string, boolean>>({})
+  const [savingFields, setSavingFields] = useState<Record<string, boolean>>({})
+  const user: SessionUser | null = getUser()
+  const canEdit = !!user && (user.role === 'ADMIN' || user.role === 'INSPECTOR')
+
+  const startEdit = (key: string) => {
+    setEditing((prev) => ({ ...prev, [key]: true }))
+    setDrafts((prev) => ({ ...prev, [key]: data?.declarations?.[key] ?? '' }))
+  }
+
+  const cancelEdit = (key: string) => {
+    setEditing((prev) => ({ ...prev, [key]: false }))
+    setDrafts((prev) => {
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+  }
+
+  const saveField = async (key: string) => {
+    if (!data) return
+    const value = (drafts[key] ?? '').trim()
+    const current = data.declarations?.[key] ?? ''
+    if (value === current) {
+      cancelEdit(key)
+      return
+    }
+    setSavingFields((prev) => ({ ...prev, [key]: true }))
+    try {
+      const { data: updated } = await api.patch(`/api/inspect/${id}`, { overrides: { [key]: value } })
+      setData(updated)
+      setEditing((prev) => ({ ...prev, [key]: false }))
+      setDrafts((prev) => {
+        const next = { ...prev }
+        delete next[key]
+        return next
+      })
+      toast.success(`${FIELD_LABELS[key] ?? key} corrected`)
+    } catch (err) {
+      toast.error(apiError(err, 'Failed to save correction'))
+    } finally {
+      setSavingFields((prev) => ({ ...prev, [key]: false }))
+    }
+  }
 
   useEffect(() => {
     if (!getUser()) {
@@ -126,6 +204,23 @@ export default function InspectionDetailPage() {
           }),
         )
         setImages(urls)
+
+        if (data.heatmaps?.length) {
+          const hmUrls = await Promise.all(
+            (data.heatmaps ?? []).map(async (h) => {
+              try {
+                const resp = await api.get(`/api/inspect/${id}/heatmap/${h.image_index}`, {
+                  responseType: 'blob',
+                  timeout: 60000,
+                })
+                return window.URL.createObjectURL(resp.data)
+              } catch {
+                return ''
+              }
+            }),
+          )
+          setHeatmapUrls(hmUrls)
+        }
       })
       .catch((err: unknown) => {
         if ((err as { response?: { status?: number } })?.response?.status === 401) router.replace('/login')
@@ -146,6 +241,18 @@ export default function InspectionDetailPage() {
       toast.success(`${format.toUpperCase()} exported`)
     } catch {
       toast.error('Export failed')
+    }
+  }
+
+  const downloadCertificate = async () => {
+    try {
+      await downloadBlob(
+        `/api/inspect/${id}/certificate`,
+        `LegalMatrix-Certificate-${id}.pdf`,
+      )
+      toast.success('Certificate downloaded!')
+    } catch {
+      toast.error('Failed to download certificate')
     }
   }
 
@@ -220,18 +327,151 @@ export default function InspectionDetailPage() {
             </section>
 
             <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-              <h3 className="font-semibold text-gray-800 mb-3">Extracted Declarations</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {Object.entries(data.declarations ?? {}).map(([key, value]) => (
-                  <div key={key} className="flex items-start gap-2 p-2 bg-gray-50 rounded-lg">
-                    <span className="text-sm font-medium text-gray-600 capitalize min-w-[120px]">
-                      {FIELD_LABELS[key] ?? key.replace(/_/g, ' ')}:
-                    </span>
-                    <span className={`text-sm ${value ? 'text-gray-900' : 'text-red-400 italic'}`}>
-                      {value || 'Not detected'}
+              <h3 className="font-semibold text-gray-800 mb-1">Extracted Declarations</h3>
+              {data.extraction_confidence && (
+                <div className="mb-3 rounded-lg bg-indigo-50 border border-indigo-100 px-3 py-2 flex items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-indigo-700">Extraction confidence</span>
+                    <span
+                      className={`text-sm font-bold ${
+                        data.extraction_confidence.overall >= 70
+                          ? 'text-green-600'
+                          : data.extraction_confidence.overall >= 40
+                            ? 'text-yellow-600'
+                            : 'text-red-600'
+                      }`}
+                    >
+                      {data.extraction_confidence.overall}%
                     </span>
                   </div>
-                ))}
+                  <div className="flex-1 h-2 bg-white rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${
+                        data.extraction_confidence.overall >= 70
+                          ? 'bg-green-500'
+                          : data.extraction_confidence.overall >= 40
+                            ? 'bg-yellow-500'
+                            : 'bg-red-500'
+                      }`}
+                      style={{ width: `${data.extraction_confidence.overall}%` }}
+                    />
+                  </div>
+                  <span className="text-[11px] text-indigo-600 whitespace-nowrap">
+                    {data.extraction_confidence.fields_present}/
+                    {data.extraction_confidence.fields_required} required fields
+                  </span>
+                </div>
+              )}
+              {canEdit ? (
+                <p className="text-xs text-gray-500 mb-3">
+                  Click a value to correct an AI reading. Corrections are saved to the
+                  inspection, rules are re-evaluated, and the original value is kept for audit.
+                </p>
+              ) : (
+                <p className="text-xs text-gray-500 mb-3">Read-only (ADMIN / INSPECTOR can correct values).</p>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {Object.entries(data.declarations ?? {}).map(([key, value]) => {
+                  const overridden = data.manual_overrides?.[key]
+                  const isEditing = !!(editing[key] && canEdit)
+                  const isSaving = !!savingFields[key]
+                  return (
+                    <div
+                      key={key}
+                      className={`flex items-start gap-2 p-2 bg-gray-50 rounded-lg ${
+                        overridden ? 'ring-1 ring-amber-300' : ''
+                      }`}
+                    >
+                      <div className="min-w-[120px] shrink-0">
+                        <span className="text-sm font-medium text-gray-600 capitalize block">
+                          {FIELD_LABELS[key] ?? key.replace(/_/g, ' ')}:
+                        </span>
+                        {overridden && (
+                          <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 rounded px-1 py-0.5 inline-block mt-0.5">
+                            MANUALLY CORRECTED
+                          </span>
+                        )}
+                      </div>
+                      {isEditing ? (
+                        <div className="flex-1">
+                          <input
+                            value={drafts[key] ?? ''}
+                            onChange={(e) => setDrafts((prev) => ({ ...prev, [key]: e.target.value }))}
+                            disabled={isSaving}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') saveField(key)
+                              if (e.key === 'Escape') cancelEdit(key)
+                            }}
+                            placeholder={value || 'Not detected — type a value'}
+                            className="w-full text-sm px-2 py-1 border border-gray-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                          />
+                          <div className="flex gap-2 mt-1">
+                            <button
+                              onClick={() => saveField(key)}
+                              disabled={isSaving}
+                              className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                            >
+                              <Save className="w-3 h-3" /> {isSaving ? 'Saving…' : 'Save'}
+                            </button>
+                            <button
+                              onClick={() => cancelEdit(key)}
+                              disabled={isSaving}
+                              className="text-xs font-semibold px-2 py-1 rounded bg-white border border-gray-300 text-gray-600 hover:bg-gray-100"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex-1 min-w-0">
+                          <span
+                            className={`text-sm block break-words ${
+                              value ? 'text-gray-900' : 'text-red-400 italic'
+                            }`}
+                          >
+                            {value || 'Not detected'}
+                          </span>
+                          {overridden && (
+                            <p className="text-[11px] text-gray-400 mt-0.5">
+                              Original (AI): &quot;{overridden.original || ''}&quot;
+                            </p>
+                          )}
+                          {(() => {
+                            const ev = data.field_evidence?.[key]
+                            if (!ev || !ev.text) return null
+                            return (
+                              <div className="mt-1 flex flex-wrap items-center gap-1">
+                                <span
+                                  className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                                    ev.source === 'vlm+regex'
+                                      ? 'bg-purple-100 text-purple-700'
+                                      : ev.source === 'regex'
+                                        ? 'bg-blue-100 text-blue-700'
+                                        : 'bg-teal-100 text-teal-700'
+                                  }`}
+                                >
+                                  {ev.source}
+                                </span>
+                                <span className="text-[11px] text-gray-400 italic truncate max-w-full" title={ev.text}>
+                                  “{ev.text}”
+                                </span>
+                              </div>
+                            )
+                          })()}
+                        </div>
+                      )}
+                      {canEdit && !isEditing && (
+                        <button
+                          onClick={() => startEdit(key)}
+                          title={`Correct ${FIELD_LABELS[key] ?? key}`}
+                          className="shrink-0 p-1.5 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             </section>
 
@@ -304,6 +544,48 @@ export default function InspectionDetailPage() {
               </section>
             )}
 
+            {data.compliance_radar && (
+              <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+                <h3 className="font-semibold text-gray-800 mb-3">Compliance Radar</h3>
+                <RadarChart radar={data.compliance_radar} />
+                <p className="mt-3 text-xs text-gray-400">
+                  Font-size axis is excluded when no calibration reference (credit card /
+                  barcode) is present — the axis is unknown, not a violation.
+                </p>
+              </section>
+            )}
+
+            {data.heatmaps && data.heatmaps.length > 0 && (
+              <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+                <h3 className="font-semibold text-gray-800 mb-1">Compliance Heat-Map</h3>
+                <p className="text-xs text-gray-500 mb-3">
+                  Verdicts drawn onto each photo — green = compliant, red = violation,
+                  yellow = low confidence, cyan = calibration reference.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {data.heatmaps.map((h, i) => (
+                    <figure key={i} className="border border-gray-200 rounded-lg overflow-hidden bg-gray-50">
+                      {heatmapUrls[i] ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={heatmapUrls[i]}
+                          alt={`Compliance heat-map photo ${h.image_index + 1}`}
+                          className="w-full object-contain bg-white"
+                        />
+                      ) : (
+                        <div className="w-full h-48 flex items-center justify-center text-gray-400 text-sm">
+                          Heat-map unavailable
+                        </div>
+                      )}
+                      <figcaption className="px-3 py-2 text-xs text-gray-500 bg-white border-t border-gray-100">
+                        Photo {h.image_index + 1} heat-map
+                      </figcaption>
+                    </figure>
+                  ))}
+                </div>
+              </section>
+            )}
+
             <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
               <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
                 <AlertTriangle className="w-5 h-5 text-orange-500" />
@@ -373,6 +655,12 @@ export default function InspectionDetailPage() {
                 className="flex-1 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center justify-center gap-2 font-semibold"
               >
                 <FileDown className="w-4 h-4" /> Export CSV
+              </button>
+            <button
+                onClick={downloadCertificate}
+                className="flex-1 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center justify-center gap-2 font-semibold"
+              >
+                <FileDown className="w-4 h-4" /> Certificate
               </button>
             </div>
           </>

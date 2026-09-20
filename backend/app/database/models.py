@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS inspections (
     missing_json     TEXT NOT NULL DEFAULT '[]',
     violations_json  TEXT NOT NULL DEFAULT '[]',
     misleading_json  TEXT NOT NULL DEFAULT '[]',
+    meta_json         TEXT NOT NULL DEFAULT '{}',
     evidence_hash    TEXT NOT NULL DEFAULT '',
     images_count     INTEGER NOT NULL DEFAULT 0,
     model            TEXT NOT NULL DEFAULT '',
@@ -71,6 +72,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "misleading_json" not in cols:
         conn.execute(
             "ALTER TABLE inspections ADD COLUMN misleading_json TEXT NOT NULL DEFAULT '[]'"
+        )
+    if "meta_json" not in cols:
+        conn.execute(
+            "ALTER TABLE inspections ADD COLUMN meta_json TEXT NOT NULL DEFAULT '{}'"
         )
 
 

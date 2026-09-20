@@ -1,0 +1,181 @@
+LegalMatrix-V2 — NEW LAPTOP SETUP (fresh WSL, from zero to running)
+============================================================================
+Repo: https://github.com/SharmanRawat/LegalMatrix-V2
+This file recreates the exact dev environment used on the old machine.
+Nothing here needs the old laptop — only this repo + internet + your images.
+
+0. WHAT YOU NEED
+---------------
+- Windows 10/11 with WSL2 + Ubuntu (you already installed WSL — good).
+- ~25 GB free (Ollama models ~5 GB + 2 GB, venv ~1 GB, node_modules ~600 MB,
+  images stay on Windows E: drive, NOT copied into WSL).
+- Product images remain at E:\SIH_installation_files\images on Windows.
+  Inside WSL that path is /mnt/e/SIH_installation_files/images  (no copying needed).
+- GitHub account with access to LegalMatrix-V2. Do NOT reuse the old ghp_ token
+  that was pasted in chat — it must be revoked. Create your own (section 1).
+
+1. GITHUB AUTH (do this first, secure way)
+-----------------------------------------
+Option A (recommended): GitHub CLI
+  sudo apt update && sudo apt install -y gh
+  gh auth login        # choose GitHub.com → HTTPS → login with browser code
+  gh repo clone SharmanRawat/LegalMatrix-V2 ~/project_ml_improved
+  cd ~/project_ml_improved
+
+Option B: fine-grained Personal Access Token (classic tokens are legacy)
+  - github.com → Settings → Developer settings → Personal access tokens →
+    Fine-grained tokens → Generate new token
+  - Resource owner: SharmanRawat, Repository access: only LegalMatrix-V2
+  - Permissions: Contents read+write, Pull requests read+write, Metadata read
+  - Expiry 30-90 days. Copy it ONCE into a password manager, never into chat/docs.
+  - Clone: git clone https://github.com/SharmanRawat/LegalMatrix-V2.git ~/project_ml_improved
+    (when asked for password, paste the token; it is stored by the credential helper,
+     never in the remote URL — check with `git remote -v`, it must show NO token).
+
+Verify: `git status && git log --oneline -5 && git remote -v`
+
+2. WSL BASE PACKAGES
+--------------------
+  sudo apt update && sudo apt upgrade -y
+  sudo apt install -y git curl wget build-essential python3.12 python3.12-venv \
+    python3-pip libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 libgomp1
+
+  # Node 20 (frontend needs Node 20+)
+  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+  sudo apt install -y nodejs
+  node -v   # want v20.x
+  npm -v
+
+  # Docker (optional, only for `docker compose up` prod path; dev does NOT need it)
+  # sudo apt install -y docker.io docker-compose-plugin
+  # sudo usermod -aG docker $USER   # then restart WSL
+
+3. OLLAMA + MODELS (the 7B oracle + 3B classifier)
+--------------------------------------------------
+  curl -fsSL https://ollama.com/install.sh | sh
+  # Start server (keep running in its own terminal):
+  ollama serve &
+  # Pull both models (one-time, large downloads):
+  ollama pull qwen2.5vl:7b     # ~5 GB, VLM oracle + rescue + legacy extraction
+  ollama pull qwen2.5:3b       # ~2 GB, SLM field classifier
+  ollama list                  # both must appear
+  curl http://localhost:11434/api/tags   # must return JSON, not "connection refused"
+
+  Notes:
+  - Modelfile in repo root pins `FROM qwen2.5vl:7b` + num_ctx 8192. No custom
+    `ollama create` needed for dev (compose builds it only for prod GPU server).
+  - GPU not required on this laptop: 7B runs slow on CPU but the audit script
+    caches oracle reads, so you pay the cost once. Daily tuning uses the 3B + CPU OCR.
+  - If RAM < 16 GB, keep VLM_RESCUE_ENABLED=0 (default) and close the browser
+    during full sweeps.
+
+4. BACKEND (FastAPI, Python 3.12)
+---------------------------------
+  cd ~/project_ml_improved
+  python3.12 --version
+  python3.12 -m venv backend/venv
+  backend/venv/bin/pip install --upgrade pip
+  backend/venv/bin/pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+  # Takes ~3-5 min (opencv, rapidocr-onnxruntime, torch-free onnx CPU).
+
+  Run it (new terminal, keep running):
+  LEGALMATRIX_DATA_DIR=$PWD/backend/data \
+    backend/venv/bin/uvicorn app.main:app --app-dir backend --port 8000 --reload
+
+  Check: http://localhost:8000/health → {"status":"healthy"}
+         http://localhost:8000/rules  → rule_version LM-PCR-2011…
+
+5. FRONTEND (Next.js 16, Node 20)
+---------------------------------
+  cd ~/project_ml_improved/frontend
+  npm install          # ~2-4 min, creates node_modules/ (gitignored)
+  npm run dev          # http://localhost:3000
+  Login: admin / admin@123   (seeded automatically; CHANGE IN PROD)
+
+  If port 3000 busy: `npm run dev -- -p 3001` and set ALLOWED_ORIGINS accordingly.
+  If `next dev` complains about AGENTS.md block — ignore it, it is auto-generated.
+
+6. IMAGES (do NOT copy into the repo)
+--------------------------------------
+  ls /mnt/e/SIH_installation_files/images | head
+  # expect image3_1.jpg … image68_3.jpg (products 1-2 deleted, crappy quality)
+  # Repo ./images/ is gitignored sample cache (224 MB on old machine) — leave empty.
+  # All scripts take --images-dir, so point at /mnt/e/... directly:
+
+  cd ~/project_ml_improved/backend
+  ../backend/venv/bin/python scripts/pipeline_audit.py \
+    --images-dir /mnt/e/SIH_installation_files/images \
+    --product 6 --oracle qwen2.5vl:7b --classifier qwen2.5:3b \
+    --out-dir /tmp/pipeline_audit
+
+  First run downloads PP-OCR models (~100 MB to ~/.cache) and runs the 7B oracle
+  once per image (slow on CPU, then cached in /tmp/pipeline_audit_*_cache.json).
+  Re-runs after tuning are near-free.
+
+7. TESTS (sanity check before any commit)
+------------------------------------------
+  cd ~/project_ml_improved/backend
+  ./venv/bin/python -m pytest -q
+  # expect: 76 passed (OCR mocked — no Ollama needed)
+
+8. ENV VARS CHEAT SHEET (dev defaults work; override only when needed)
+-----------------------------------------------------------------------
+  OLLAMA_HOST=http://localhost:11434  QWN_MODEL=qwen2.5vl:7b
+  FIELD_CLASSIFIER_MODEL=qwen2.5:3b   FIELD_CLASSIFIER_ENABLED=1
+  VLM_RESCUE_ENABLED=0                # set 1 only when measuring rescue path (needs RAM/GPU)
+  VLM_RESCUE_CONFIDENCE_THRESHOLD=55
+  OCR_ENGINE=auto  OCR_ENHANCE_ENABLED=1  OCR_MULTI_PASS_ENABLED=1  OCR_MULTI_PASS_ON_FAIL=1
+  OCR_PANE_ZOOM_ENABLED=0             # expensive, keep off
+  LEGALMATRIX_DATA_DIR=$PWD/backend/data
+  ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+
+9. DOCKER PATH (alternative, not needed for daily dev)
+------------------------------------------------------
+  docker compose up --build
+  # frontend :3000, backend :8000, ollama :11434 (needs NVIDIA runtime for GPU;
+  #  on CPU-only laptop it still works, just slow). Data persists in volumes
+  #  ollama_data + legalmatrix_data. Backend needs OLLAMA_HOST=http://ollama:11434
+  #  which compose already sets.
+
+10. DAILY WORKFLOW ON NEW LAPTOP
+--------------------------------
+  # terminal 1: ollama serve
+  # terminal 2: LEGALMATRIX_DATA_DIR=$PWD/backend/data backend/venv/bin/uvicorn app.main:app --app-dir backend --port 8000 --reload
+  # terminal 3: cd frontend && npm run dev
+  # terminal 4: audits / git
+  git pull --rebase
+  git checkout -b feat/<stream>-<short>
+  # …edit…; pytest; then:
+  git status --short   # must show NO venv/, node_modules/, data/, images/, .env, *.db
+  git add -A && git commit -m "scope: what changed"
+  git push -u origin feat/<stream>-<short>   # open PR on GitHub
+
+11. TROUBLESHOOTING
+-------------------
+  - `curl localhost:11434 → refused`: ollama serve not running; start it.
+  - `ollama pull` slow/stuck: check disk + RAM; retry; models resume.
+  - `rapidocr` import error: venv used wrong python — recreate with python3.12,
+    reinstall both requirements files.
+  - `cv2 / libGL` error: sudo apt install -y libgl1 libglib2.0-0 (section 2).
+  - `npm install` fails: node -v must be 20+; delete frontend/node_modules + package-lock? No —
+    never delete package-lock.json, just `npm cache clean --force` and retry.
+  - frontend 500 / timeout on inspect: backend down or Ollama down; 600 s timeout is
+    normal for first 7B call — wait, then check backend terminal logs ([OCR] lines).
+  - `/mnt/e/... not found`: in WSL run `ls /mnt/e`; if empty, restart WSL
+    (`wsl --shutdown` from Windows) and ensure E: drive connected.
+  - `git push` asks for password: use your fine-grained token as password, or
+    `gh auth login` again. Never put the token in `git remote -v` URL.
+  - pytest failures after fresh clone: ensure LEGALMATRIX_DATA_DIR not pointing at a
+    stale db; tests use temp dirs automatically — just run `./venv/bin/python -m pytest -q`.
+
+12. WHAT LIVES WHERE (so you are never lost)
+---------------------------------------------
+  docs/PRD.md          what + why (PS 26034, users, 10 fields, acceptance)
+  docs/ARCHITECTURE.md how it runs (pipeline stages, services table, env vars)
+  docs/RULES.md        the 7 statutory rules + font/USP/exemption tables
+  docs/DESIGN.md       pages + API contracts + DB schema + result JSON
+  docs/TASKS.md        done / active ML loop / parallel streams for friends
+  docs/MEMORY.md       gotchas + file pointers + security (revoke old token!)
+  backend/scripts/pipeline_audit.py   the product-by-product 7B-oracle harness
+  backend/app/data/rules.json         rule source of truth
+  README.md              quickstart (short version of this file)

@@ -57,12 +57,15 @@ class OCRService:
             "cannot tell.\n"
             "- usp = UNIT SALE PRICE, the price per unit quantity printed on "
             "the label (e.g. 'Rs. 5.89 per g', 'USP 1.00/ml', 'Rs. 12 per "
-            "100g'). Copy it verbatim.\n"
+            "100g'). Copy it verbatim. Keep the printed currency and unit "
+            "notation (₹, Rs., /g, per ml) exactly as shown.\n"
             "- usp is NOT a marketing slogan, tagline, brand motto, flavor "
             "descriptor, preparation/usage instruction, or contact line. If "
             "the label shows no unit sale price, set usp to an empty string.\n"
             "- mrp = the maximum retail price (e.g. 'Rs. 265' or 'MRP Rs. "
-            "265/-'), verbatim.\n"
+            "265/-'), verbatim. IMPORTANT: preserve the Indian currency symbol "
+            "exactly as printed — ₹ or 'Rs.' or 'INR' — immediately before or "
+            "after the number; never omit, move or translate it.\n"
             "- net_quantity = the declared net quantity (e.g. '45 g', "
             "'250 ml'), verbatim."
         )
@@ -168,6 +171,54 @@ class OCRService:
             print(f"[OCR] extraction failed: {e}", flush=True)
             logger.error(f"Extraction failed: {e}")
             return {k: "" for k in self.EXPECTED_KEYS}
+
+    def verify_currency_symbol(self, image_path: str, value: str) -> Optional[bool]:
+        """Best-effort second look: confirm a ₹ / Rs. glyph is printed beside a
+        price value that OCR returned without a currency symbol.
+
+        Returns True / False when the VLM answers clearly, None if it cannot
+        tell or the check fails (caller then keeps the original verdict).
+        """
+        try:
+            img = Image.open(image_path).convert("RGB")
+            img = ImageOps.exif_transpose(img)
+            img.thumbnail((self.max_image_size, self.max_image_size))
+            buffer = BytesIO()
+            img.save(buffer, format="JPEG", quality=85)
+            prompt = (
+                "Look at this product label image. The text below was read "
+                f"from it as a price value: {value}\n"
+                "Is an Indian rupee symbol — '\\u20b9' (₹) or 'Rs.' or 'INR' — "
+                "printed immediately next to this price value (just before or "
+                "just after it)? The symbol may be small or stylized.\n"
+                "Answer with exactly one word: YES or NO."
+            )
+            payload = {
+                "model": self.model,
+                "messages": [{
+                    "role": "user",
+                    "content": prompt,
+                    "images": [base64.b64encode(buffer.getvalue()).decode("utf-8")],
+                }],
+                "stream": False,
+                "options": {"temperature": 0.0, "num_ctx": 4096},
+            }
+            with httpx.Client(timeout=min(self.timeout, 120)) as client:
+                resp = client.post(self.ollama_url, json=payload)
+            if resp.status_code != 200:
+                print(f"[OCR] currency verify HTTP {resp.status_code}: {resp.text[:150]}", flush=True)
+                return None
+            raw = resp.json().get("message", {}).get("content", "").strip()
+            print(f"[OCR] currency verify for {value!r}: {raw[:40]!r}", flush=True)
+            first = raw.split()[0].lower() if raw.split() else ""
+            if first.startswith("yes"):
+                return True
+            if first.startswith("no"):
+                return False
+            return None
+        except Exception as e:
+            print(f"[OCR] currency verify failed for {image_path}: {e}", flush=True)
+            return None
 
     @staticmethod
     def _is_garbage(raw: str) -> bool:

@@ -135,6 +135,90 @@ class TestMisleadingChecks:
         )
         assert any(i["check"] == "usp_mismatch_computed" for i in issues)
 
+    def test_bare_mrp_number_flagged_unless_symbol_verified(self):
+        from app.services.inspection_service import _check_misleading
+
+        decl = {"mrp": "50.00", "usp": "", "net_quantity": ""}
+        flagged = _check_misleading(decl, {})
+        assert any(i["check"] == "mrp_format" for i in flagged)
+
+        verified = _check_misleading(decl, {}, currency_verified={"mrp": True})
+        assert not any(i["check"] == "mrp_format" for i in verified)
+
+
+class TestCurrencyVerifiedRule:
+    """Rule 6(1)(e): a visually-confirmed ₹ makes a bare OCR number pass."""
+
+    def test_missing_symbol_without_verification_is_violation(self):
+        decl = {
+            "manufacturer": "A Pvt Ltd",
+            "product_name": "Snack",
+            "net_quantity": "45 g",
+            "manufacturing_date": "MFG: 12/2025",
+            "mrp": "50.00",
+            "consumer_care": "care@a.com",
+            "dimensions": "",
+        }
+        result = rule_engine.evaluate_compliance(decl, missing=[])
+        mrp_violations = [v for v in result["violations"] if v["field"] == "mrp"]
+        assert len(mrp_violations) == 1
+        assert mrp_violations[0]["status"] == "FORMAT_ISSUE"
+
+    def test_verified_symbol_passes_mrp_format(self):
+        decl = {
+            "manufacturer": "A Pvt Ltd",
+            "product_name": "Snack",
+            "net_quantity": "45 g",
+            "manufacturing_date": "MFG: 12/2025",
+            "mrp": "50.00",
+            "consumer_care": "care@a.com",
+            "dimensions": "",
+        }
+        result = rule_engine.evaluate_compliance(
+            decl, missing=[], currency_verified={"mrp": True}
+        )
+        assert not any(v["field"] == "mrp" for v in result["violations"])
+        assert result["compliance_score"] == 100.0
+
+    def test_verify_mrp_currency_skips_when_symbol_present(self):
+        from app.services.inspection_service import _verify_mrp_currency
+
+        class Fake:
+            def verify_currency_symbol(self, path, value):
+                raise AssertionError("should not be called")
+
+        assert _verify_mrp_currency(Fake(), ["a.jpg"], [{"mrp": "Rs. 265"}], "Rs. 265") == {}
+        assert _verify_mrp_currency(Fake(), ["a.jpg"], [{"mrp": "50.00"}], "50.00") == {}
+
+    def test_verify_mrp_currency_confirms_on_source_photo(self):
+        from app.services.inspection_service import _verify_mrp_currency
+
+        class ConfirmingOCR:
+            def __init__(self, seen):
+                self.seen = seen
+
+            def verify_currency_symbol(self, path, value):
+                self.seen.append(path)
+                return True
+
+        seen = []
+        wrapped = ConfirmingOCR(seen)
+        result = _verify_mrp_currency(
+            wrapped, ["front.jpg", "back.jpg"],
+            [{"mrp": ""}, {"mrp": "50.00"}], "50.00",
+        )
+        assert result == {"mrp": True}
+        assert seen == ["back.jpg"]
+
+    def test_verify_mrp_currency_negative_keeps_no_override(self):
+        from app.services.inspection_service import _verify_mrp_currency
+
+        class DenyingOCR:
+            def verify_currency_symbol(self, path, value):
+                return False
+
+        assert _verify_mrp_currency(DenyingOCR(), ["a.jpg"], [{"mrp": "50.00"}], "50.00") == {}
+
 
 class TestMergeExtractions:
     """Statutory price block (MRP/USP/net qty) must come from one photo."""

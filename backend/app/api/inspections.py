@@ -105,6 +105,28 @@ async def get_inspection(inspection_id: str, user=Depends(optional_auth)):
     return inspection
 
 
+@router.patch("/inspect/{inspection_id}")
+async def override_inspection(
+    inspection_id: str,
+    payload: Dict,
+    user=Depends(require_roles("ADMIN", "INSPECTOR")),
+):
+    """Manually correct extracted declaration values (e.g. a wrong OCR / LLM
+    reading). Rules are re-evaluated on the corrected declarations; the
+    original AI values are preserved in meta.manual_overrides."""
+    user_id = user.get("uid") if user else None
+    overrides = payload.get("overrides") or payload
+    if not isinstance(overrides, dict) or not overrides:
+        raise HTTPException(400, "Provide 'overrides' as a JSON object of field -> corrected value")
+    try:
+        updated = await run_in_thread(
+            inspection_service.apply_manual_overrides, inspection_id, overrides, user_id
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return updated
+
+
 @router.get("/inspect/{inspection_id}/evidence/{index}")
 async def get_evidence_image(
     inspection_id: str,
@@ -124,6 +146,56 @@ async def get_evidence_image(
     if not str(candidate).startswith(str(evidence_root)) or not candidate.exists():
         raise HTTPException(404, "Evidence image not found")
     return FileResponse(str(candidate))
+
+
+def _serve_stored_file(inspection_id: str, rel_dir: str, filename: str, media_type: str, error_msg: str = "File not found"):
+    """Safe FileResponse within the evidence root (blocks path traversal)."""
+    inspection = inspection_repo.get_inspection(inspection_id)
+    if not inspection:
+        raise HTTPException(404, "Inspection not found")
+    evidence_root = get_evidence_dir().resolve()
+    candidate = (evidence_root / rel_dir / filename).resolve()
+    if not str(candidate).startswith(str(evidence_root)) or not candidate.exists():
+        raise HTTPException(404, error_msg)
+    return FileResponse(str(candidate), media_type=media_type)
+
+
+@router.get("/inspect/{inspection_id}/heatmap/{index}")
+async def get_heatmap(
+    inspection_id: str,
+    index: int,
+    user=Depends(optional_auth),
+):
+    """Serve the compliance heat-map overlay for a photo of an inspection."""
+    inspection = inspection_repo.get_inspection(inspection_id)
+    if not inspection:
+        raise HTTPException(404, "Inspection not found")
+    heatmap = next((h for h in inspection.get("heatmaps", []) if h.get("image_index") == index), None)
+    if not heatmap:
+        raise HTTPException(404, "Heat-map not found")
+    return await to_thread_static(_serve_stored_file, inspection_id, "heatmaps", heatmap["filename"], "image/jpeg")
+
+
+@router.get("/inspect/{inspection_id}/certificate")
+async def get_certificate(
+    inspection_id: str,
+    user=Depends(optional_auth),
+):
+    """Download a tamper-evident compliance certificate (PDF) for a result."""
+    inspection = inspection_repo.get_inspection(inspection_id)
+    if not inspection:
+        raise HTTPException(404, "Inspection not found")
+    from app.services.certificate_generator import build_certificate
+    pdf_bytes = await run_in_thread(build_certificate, inspection, "/inspect/verify?inspection_id=")
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=LegalMatrix-Certificate-{inspection_id}.pdf"},
+    )
+
+
+async def to_thread_static(func, *args):
+    return await run_in_thread(func, *args)
 
 
 @router.get("/inspect")
@@ -262,6 +334,30 @@ def _build_pdf(result: Dict) -> bytes:
     pdf.set_text_color(0, 0, 0)
     pdf.ln(4)
 
+    # Extraction confidence (resource-adaptive cascade auditability)
+    conf = result.get("extraction_confidence") or {}
+    if conf.get("overall") is not None:
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.cell(0, 7, "Extraction Confidence", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_draw_color(37, 99, 235)
+        pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+        pdf.ln(3)
+        overall = float(conf["overall"])
+        corr = (22, 163, 74) if overall >= 70 else ((234, 179, 8) if overall >= 40 else (220, 38, 38))
+        pdf.set_font("Helvetica", "B", 13)
+        pdf.set_text_color(*corr)
+        pdf.cell(0, 8, f"{overall:.0f}%", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(70, 70, 70)
+        pdf.cell(0, 5,
+                 f"Fields present: {conf.get('fields_present', '—')} / "
+                 f"{conf.get('fields_required', '—')}  |  "
+                 f"Coverage ratio: {conf.get('coverage_ratio', '—')}",
+                 new_x="LMARGIN", new_y="NEXT")
+        pdf.set_text_color(0, 0, 0)
+        pdf.ln(3)
+
     # Evidence images
     images = evidence.get("images", [])
     if images:
@@ -296,6 +392,7 @@ def _build_pdf(result: Dict) -> bytes:
         "consumer_care": "Consumer Care", "dimensions": "Dimensions",
     }
     declarations = result.get("declarations", {})
+    field_evidence = result.get("field_evidence", {})
     for key, label in field_labels.items():
         val = declarations.get(key, "")
         pdf.set_font("Helvetica", "B", 9)
@@ -304,6 +401,16 @@ def _build_pdf(result: Dict) -> bytes:
             pdf.set_font("Helvetica", "", 9)
             pdf.set_text_color(22, 163, 74)
             pdf.cell(0, 6, _sanitize(val), new_x="LMARGIN", new_y="NEXT")
+            ev = field_evidence.get(key, {})
+            src = ev.get("source", "")
+            txt = ev.get("text", "")
+            if src or txt:
+                pdf.set_text_color(120, 120, 120)
+                pdf.set_font("Helvetica", "I", 7)
+                src_label = f"[via {src}] " if src else ""
+                pdf.cell(40, 4, "", new_x="RIGHT", new_y="LAST")
+                pdf.multi_cell(0, 4, f'{src_label}"{_sanitize(txt)}"',
+                               new_x="LMARGIN", new_y="NEXT")
         else:
             pdf.set_font("Helvetica", "I", 9)
             pdf.set_text_color(220, 38, 38)

@@ -6,3 +6,5 @@ Pillow==12.3.0
 fpdf2==2.8.8
 numpy==2.5.3
 opencv-contrib-python-headless==5.0.0.93
+rapidocr-onnxruntime==1.2.3
+qrcode==8.2
