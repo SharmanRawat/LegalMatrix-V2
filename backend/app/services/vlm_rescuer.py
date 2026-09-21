@@ -12,7 +12,7 @@ import base64
 import io
 import logging
 import time
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 import httpx
 from PIL import Image
@@ -42,6 +42,97 @@ RESCUE_PROMPT = (
     '"manufacturing_date":"","expiry_date":"","consumer_care":"","dimensions":"",'
     '"edible":""}'
 )
+
+# MRP-only escalation. The all-fields rescue (RESCUE_PROMPT) was measured to
+# mis-file dates/contact/manufacturer blobs (run15/run17 notes), so the guarded
+# path is deliberately narrow: ask ONLY for the printed price, accept ONLY a
+# validated price with a currency marker, and write ONLY the mrp cell.
+MRP_ONLY_PROMPT = (
+    "You are a legal-metrology label reader. Look at this product label photo.\n"
+    "Find the printed MAXIMUM RETAIL PRICE line (look for 'MRP', 'M.R.P', "
+    "'MRP Rs.', 'MRP ₹', '₹' or 'Rs.' followed by an amount).\n"
+    "Reply with ONLY the price exactly as printed, keeping its currency "
+    "marker, e.g. 'Rs. 119/-' or 'MRP ₹ 440.00'.\n"
+    "If the label has NO printed price at all, reply with exactly: NONE\n"
+    "No other text, no explanation."
+)
+
+# An MRP below one rupee is structurally implausible for a packaged commodity
+# (p23's 'MRP Rs. 0.31/' is an OCR digit-loss, not a real price) — treated as
+# a missing price so the guard can try to rescue it.
+MRP_PLAUSIBLE_FLOOR = 1.0
+
+# Photos are probed in declaration-face order (the price block lives on these),
+# with unknown/None label types last.
+_MRP_DECLARATION_FACES = ("back", "top", "side", "other", "front")
+
+
+def parse_mrp_answer(raw: str) -> Optional[str]:
+    """Strictly validate a VLM MRP answer -> canonical 'MRP Rs. <amount>'.
+
+    Accepts only a price WITH a currency marker and no per-unit suffix; a bare
+    amount, a per-unit line ('Rs. 2/g'), sub-rupee amounts and 'NONE' all
+    return None so the caller never writes an unvalidated price.
+    """
+    if not raw:
+        return None
+    text = str(raw).strip().strip("`\"' \t\n").strip()
+    if not text or text.upper() == "NONE":
+        return None
+    from app.services.value_normalizers import parse_price
+    amt, has_currency, unit = parse_price(text)
+    if amt is None or not has_currency or unit:
+        return None
+    if amt < MRP_PLAUSIBLE_FLOOR:
+        return None
+    if float(amt).is_integer():
+        shown = f"{int(amt)}"
+    else:
+        shown = f"{amt:.2f}"  # keep printed cents: 49.50, 2.50
+    return f"MRP Rs. {shown}"
+
+
+def guarded_mrp_rescue(
+    merged: Dict,
+    image_paths: List[str],
+    label_types: Optional[List[Optional[str]]] = None,
+    read_mrp: Optional[Callable[[str], Optional[str]]] = None,
+) -> Dict:
+    """MRP-only escalation over merged fields; never touches other cells.
+
+    Fires ONLY when the merged MRP is empty or structurally implausible
+    (sub-rupee), probes the product's photos in declaration-face order until
+    the VLM returns a validated price, and writes back ONLY the mrp cell.
+    Returns a new dict; the input is not mutated. ``read_mrp`` is injectable
+    for tests (defaults to a real VLMRescuer call).
+    """
+    mrp = (merged.get("mrp") or "").strip()
+    from app.services.value_normalizers import parse_price
+    amt, has_currency, unit = parse_price(mrp)
+    if amt is not None and amt >= MRP_PLAUSIBLE_FLOOR:
+        # Already a believable price — touching it risks ok->wrong regressions.
+        return merged
+    out = dict(merged)
+    if not image_paths:
+        return out
+    if read_mrp is None:
+        read_mrp = VLMRescuer().rescue_mrp
+    lt = list(label_types) if label_types else [None] * len(image_paths)
+    ordered = sorted(
+        zip(image_paths, lt),
+        key=lambda pl: _MRP_DECLARATION_FACES.index(pl[1])
+        if pl[1] in _MRP_DECLARATION_FACES else len(_MRP_DECLARATION_FACES),
+    )
+    for path, _label in ordered:
+        try:
+            val = read_mrp(path)
+        except Exception as e:  # a VLM outage must not kill the request
+            logger.warning("VLM MRP rescue failed for %s: %s", path, e)
+            continue
+        if val:
+            out["mrp"] = val
+            break
+    return out
 
 
 class VLMRescuer:
@@ -112,6 +203,40 @@ class VLMRescuer:
         meta["classifier"] = "vlm+regex"
         result["ocr_meta"] = meta
         return result
+
+    def rescue_mrp(self, image_path: str) -> Optional[str]:
+        """Ask the VLM ONLY for the printed MRP; validated price or None.
+
+        Narrower than :meth:`rescue` (single field, strict NONE escape,
+        validated output) so the caller can fill a missing MRP without ever
+        touching dates / care / manufacturer.
+        """
+        b64, _resized = self._encode(image_path)
+        if not b64:
+            return None
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": MRP_ONLY_PROMPT,
+                          "images": [b64]}],
+            "stream": False,
+            "options": {"temperature": 0.0, "num_ctx": 4096},
+        }
+        raw = ""
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                resp = client.post(self.ollama_url, json=payload)
+            if resp.status_code != 200:
+                logger.warning("VLM MRP rescue HTTP %s", resp.status_code)
+                return None
+            raw = resp.json().get("message", {}).get("content", "") or ""
+        except Exception as e:
+            logger.warning("VLM MRP rescue failed: %s", e)
+            return None
+        canonical = parse_mrp_answer(raw)
+        if canonical is None:
+            logger.info("VLM MRP rescue: no usable price on %s -> %.80r",
+                        image_path, raw)
+        return canonical
 
     @staticmethod
     def _looks_low_confidence(result: Dict) -> bool:

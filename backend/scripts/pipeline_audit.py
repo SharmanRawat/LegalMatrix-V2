@@ -683,6 +683,12 @@ def main():
         label_types = None if args.no_labels else \
             [_label_type_for(p, label_manifest) for p in paths]
         pipe_merged = _merge(pipe_per, label_types)
+        # Mirror the shipped runtime escalation: MRP-only guarded VLM rescue
+        # (same helper + env flag the API uses), so a sweep with
+        # VLM_RESCUE_ENABLED=1 measures exactly what ships.
+        if cfg.VLM_RESCUE_ENABLED:
+            from app.services.vlm_rescuer import guarded_mrp_rescue
+            pipe_merged = guarded_mrp_rescue(pipe_merged, paths, label_types)
         print(f"  (pipeline {time.time()-t0:.1f}s for {len(paths)} images)" +
               ("  [no-labels: heuristic merge]" if args.no_labels else ""))
 

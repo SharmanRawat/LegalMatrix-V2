@@ -178,10 +178,21 @@ Still to do:
   shows the same date-glue failure `8X2020` breaking p2 mfg). v4 scaffolding
   reverted; tree byte-identical to committed v3. Baseline to beat if ever
   revisited: **166/238 (run16: v3+GPU SLM)**; GPU-era runs need their own
-  baseline (GPU shifts 3B draws). Remaining open lever: (b) **guarded VLM
-  rescue** (VLM_RESCUE_ENABLED=1 shows p2 → COMPLIANT 7/7 but mis-files expiry
-  08/2020 mfr/care blobs — needs the date/contact mis-file guard first). Do
-  NOT ship naive rescue.
+  baseline (GPU shifts 3B draws).
+- **DONE (this session): MRP-ONLY guarded VLM rescue SHIPPED (run18, +6, 0
+  regressions) — the date/contact mis-file guard, scoped to a single field.**
+  `VLM_RESCUE_ENABLED=1` now fills empty/sub-rupee MRP from the 7B VLM
+  (validated `Rs/₹` amount ≥ ₹1, `NONE`-when-absent, declaration-face photo
+  probing, writes ONLY mrp — dates/care/manufacturer never touched; runtime +
+  audit share the same `vlm_rescuer.guarded_mrp_rescue`). Measured 172/238
+  (mrp 17→23/28) with 0 regressions on an isolated cached-extraction A/B.
+  Default (flag off) is byte-identical to the 166/238 baseline.
+- Remaining MRP gaps (optional next): p5/p16/p25 are wrong-but-plausible
+  values the guard deliberately leaves alone (touching believable prices
+  risks ok→wrong regressions — would need a golden-validated
+  wrong-vs-right discriminator); p17/p27/p28 are 7B read-misses
+  (230/68/50 vs golden 210/83/85). p2's mfg date-glue tail and the
+  OCR-loss date cells (p25 expiry) remain OCR-bound, not prompt-fixable.
 - Optional later: prompt-level label hint to the SLM ("this is the BACK label") — not
   needed for routing correctness, only for per-photo extraction focus.
 - Diagnose the user's 4-image upload that returned poor results (product + output

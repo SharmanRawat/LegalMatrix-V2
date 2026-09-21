@@ -14,7 +14,7 @@ from typing import Dict, List, Optional
 from PIL import Image
 
 from app.config import QWN_MODEL, get_evidence_dir as resolve_evidence_dir
-from app.config import VLM_RESCUE_ENABLED, VLM_RESCUE_MODEL, VLM_RESCUE_CONFIDENCE_THRESHOLD
+from app.config import VLM_RESCUE_ENABLED
 from app.core.rule_engine import rule_engine
 from app.repositories import inspections as inspection_repo
 from app.services import compliance_scorer, heatmap_generator, preprocessing
@@ -698,27 +698,6 @@ def _token_belongs(token: Dict, field_map: Dict, field_names: tuple) -> bool:
     return False
 
 
-def _vlm_rescue(image_paths: List[str], individual_results: List[Dict], ocr) -> List[Dict]:
-    """Re-read images that produced low-confidence extractions with a
-    vision-language model. Used only when VLM_RESCUE_ENABLED is on and the
-    fast CPU path scored below the confidence threshold (resource-adaptive)."""
-    try:
-        from app.services.vlm_rescuer import VLMRescuer
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning("VLM rescuer unavailable: %s", e)
-        return []
-    rescuer = VLMRescuer(model=VLM_RESCUE_MODEL)
-    out = []
-    for idx, r in enumerate(individual_results):
-        if idx < len(image_paths) and r:
-            saved = rescuer.rescue(image_paths[idx], r)
-            out.append(saved or r)
-        else:
-            out.append(r)
-    return out
-
-
 def run_inspection(
     image_paths: List[str],
     user_id: Optional[int] = None,
@@ -747,16 +726,17 @@ def run_inspection(
     field_evidence = _field_evidence(individual_results, safe_decl)
     extraction_confidence = _extraction_confidence(individual_results, safe_decl, missing)
 
-    # Resource-adaptive cascade: escalation to a VLM when confidence is low.
-    if VLM_RESCUE_ENABLED and extraction_confidence["overall"] < VLM_RESCUE_CONFIDENCE_THRESHOLD:
-        rescued = _vlm_rescue(image_paths, individual_results, ocr)
-        if rescued:
-            individual_results = rescued
-            merged = merge_extractions(individual_results, label_types)
-            safe_decl = {key: merged.get(key, "") for key in EXPECTED_KEYS}
-            missing = compute_missing(safe_decl)
-            field_evidence = _field_evidence(individual_results, safe_decl)
-            extraction_confidence = _extraction_confidence(individual_results, safe_decl, missing)
+    # Resource-adaptive cascade: MRP-only VLM escalation when the merge left
+    # the price empty/implausible. Deliberately narrow — the earlier all-fields
+    # rescue mis-filed dates / care / manufacturer blobs (run15/run17), so the
+    # guard never writes anything but the mrp cell.
+    if VLM_RESCUE_ENABLED:
+        from app.services.vlm_rescuer import guarded_mrp_rescue
+        merged = guarded_mrp_rescue(merged, image_paths, label_types)
+        safe_decl = {key: merged.get(key, "") for key in EXPECTED_KEYS}
+        missing = compute_missing(safe_decl)
+        field_evidence = _field_evidence(individual_results, safe_decl)
+        extraction_confidence = _extraction_confidence(individual_results, safe_decl, missing)
 
     overall_status = compute_overall_status(missing)
     currency_verified = _verify_mrp_currency(
