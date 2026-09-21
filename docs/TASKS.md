@@ -179,20 +179,17 @@ Still to do:
   reverted; tree byte-identical to committed v3. Baseline to beat if ever
   revisited: **166/238 (run16: v3+GPU SLM)**; GPU-era runs need their own
   baseline (GPU shifts 3B draws).
-- **DONE (this session): MRP-ONLY guarded VLM rescue SHIPPED (run18, +6, 0
-  regressions) — the date/contact mis-file guard, scoped to a single field.**
-  `VLM_RESCUE_ENABLED=1` now fills empty/sub-rupee MRP from the 7B VLM
-  (validated `Rs/₹` amount ≥ ₹1, `NONE`-when-absent, declaration-face photo
-  probing, writes ONLY mrp — dates/care/manufacturer never touched; runtime +
-  audit share the same `vlm_rescuer.guarded_mrp_rescue`). Measured 172/238
-  (mrp 17→23/28) with 0 regressions on an isolated cached-extraction A/B.
-  Default (flag off) is byte-identical to the 166/238 baseline.
-- Remaining MRP gaps (optional next): p5/p16/p25 are wrong-but-plausible
-  values the guard deliberately leaves alone (touching believable prices
-  risks ok→wrong regressions — would need a golden-validated
-  wrong-vs-right discriminator); p17/p27/p28 are 7B read-misses
-  (230/68/50 vs golden 210/83/85). p2's mfg date-glue tail and the
-  OCR-loss date cells (p25 expiry) remain OCR-bound, not prompt-fixable.
+- **CLOSED (this session): NO VLM rescue path — product decision.** An
+  MRP-only guarded 7B-VLM rescue was built and measured (run18: 166→172/238,
+  6 MRP cells fixed, 0 regressions) but **deliberately NOT adopted**: the
+  field-extraction UX keeps unreadable statutory fields as **NOT DETECTED**
+  and lets the **inspector enter the value manually** after viewing the photo
+  (`apply_manual_overrides` + override UI + PDF "NOT DETECTED" cell) — a
+  human check beats an automated re-read for legal evidence, and it keeps the
+  demo fully offline/CPU. All rescue scaffolding is reverted; shipped code is
+  byte-identical to run16's 166/238 baseline. (Anyone re-litigating must A/B
+  on a shared cached extraction — raw run diff shows 3B GPU draw noise on a
+  couple of cells.)
 - Optional later: prompt-level label hint to the SLM ("this is the BACK label") — not
   needed for routing correctness, only for per-photo extraction focus.
 - Diagnose the user's 4-image upload that returned poor results (product + output

@@ -105,7 +105,7 @@ Two layers pulled after run6; measured on the same golden set:
 | run15-v4mobile | **PP-OCRv4 mobile det+rec swap** (fresh, same new host, GPU SLM) | 151 | 63.4% |
 | run16-v3gpu | **PP-OCRv3 CPU + GPU-SLM fresh baseline** (GPU shifts 3B draws → not comparable to run14) | 166 | 69.7% |
 | run17-v4srv | **PP-OCRv4 SERVER det+rec swap on GPU** (fresh, same host, GPU SLM) | 169 | 71.0% |
-| run18-mrp | **v3 + MRP-only guarded VLM rescue** (fresh, same host, GPU SLM, `VLM_RESCUE_ENABLED=1`) | **172** | 72.3% |
+| run18-mrp | **v3 + MRP-only guarded VLM rescue** (fresh, same host, GPU SLM, `VLM_RESCUE_ENABLED=1`) — **measured, NOT adopted** → see §3b-iv | 172 | 72.3% |
 
 - **run8-gate (deterministic, KEPT):** `_SEP_DATE_RE` no longer treats a bare
   space as a date separator, bare years restricted to 19xx/20xx, and numeric
@@ -223,28 +223,26 @@ Two layers pulled after run6; measured on the same golden set:
   accurate on this stack. **CLOSED: keep bundled PP-OCRv3 as the shipped OCR
   (deterministic 166/238 baseline). Remaining open lever = guarded VLM rescue
   (option b), needs the date/contact mis-file guard first.**
-- **run18 — MRP-ONLY guarded VLM rescue, SHIPPED (+6, 0 regressions).** The
-  all-fields rescue was collapsed to a single-field escalation:
-  `vlm_rescuer.guarded_mrp_rescue` fires ONLY when the merged MRP is empty or
-  sub-rupee, probes the product's photos in declaration-face order
-  (back→top→side→other→front), asks the 7B VLM ONLY for the printed price
-  (strict `NONE`-when-absent escape), accepts ONLY a validated price
-  (`Rs/₹` marker, no per-unit suffix, amount ≥ ₹1), and writes ONLY the mrp
-  cell — dates/care/manufacturer are structurally never touched. Wired into
-  BOTH the runtime (`inspection_service.run_inspection`) and the audit
-  (`pipeline_audit`, gated on `VLM_RESCUE_ENABLED=1`), so a golden sweep with
-  the flag on measures exactly what ships. Isolated A/B on identical cached
-  extraction: runA (no rescue) 166/238, mrp 17/28 → runB (rescue) 172/238,
-  mrp 23/28 = **exactly 6 MRP cells fixed (p2 ₹440, p6 ₹119, p7 ₹180, p22
-  ₹35, p23 ₹109, p26 ₹83), 0 cells changed outside mrp, 0 regressions**.
-  p13 (no price printed) correctly stays empty. Remaining MRP misses: p5/p16/
-  p25 are wrong-but-plausible values left untouched by design (touching a
-  believable price risks ok→wrong regressions); p17/p27/p28 are rescue
-  read-misses (VLM returned 230/68/50 vs golden 210/83/85 — missing→wrong,
-  no score change). NOTE: the raw run16-vs-run18 diff also showed p29 expiry
-  +1 and p23 manufacturer −1 — BOTH reproduced by runA (no rescue), i.e. 3B
-  GPU draw noise between runs, NOT this change; always A/B on a shared cached
-  extraction to isolate rescue effects from SLM draw variance.
+- **run18 — MRP-only guarded VLM rescue, MEASURED then NOT ADOPTED (product
+  decision).** A single-field escalation was built and tested:
+  `vlm_rescuer.guarded_mrp_rescue` fires ONLY when merged MRP is empty or
+  sub-rupee, probes photos in declaration-face order, asks the 7B VLM ONLY
+  for the printed price (strict `NONE`-when-absent escape), accepts only a
+  validated `Rs/₹` amount ≥ ₹1, and writes ONLY the mrp cell. Isolated A/B on
+  identical cached extraction: 166/238 → 172/238 (mrp 17→23/28; fixed p2
+  ₹440, p6 ₹119, p7 ₹180, p22 ₹35, p23 ₹109, p26 ₹83; 0 cells outside mrp,
+  0 regressions). **However: decided NOT to ship any VLM rescue path.** The
+  product flow keeps an unreadable statutory field as **NOT DETECTED** and
+  the **inspector manually enters the value** after eyeballing the photo
+  (manual override API + UI + PDF "NOT DETECTED" cell; `apply_manual_overrides`
+  re-scored against the rules). Rationale: no automated re-read of a field
+  the OCR stack cannot see (MRP was OCR-lost on p2/p6/p7/p17/p22/p26/p27/p28)
+  beats a trained human inspector for legal evidence, and it keeps the demo
+  fully offline/CPU. The MRP-rescue code is reverted; shipped OCR stack is
+  byte-identical to the run16 baseline. NOTE for anyone re-litigating: the
+  raw run16-vs-run18 diff also showed p29 expiry +1 / p23 manufacturer −1,
+  both reproduced WITHOUT the rescue (3B GPU draw noise) — always A/B on a
+  shared cached extraction to isolate a change from SLM draw variance.
 
 ## 4. Commands
 
