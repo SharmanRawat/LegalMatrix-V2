@@ -109,6 +109,7 @@ Two layers pulled after run6; measured on the same golden set:
 | run19-dates2 | **v3 + raw-OCR two-date reconciliation gate** (`_reconcile_date_ordering`, frozen run16 pipe cache — deterministic merge change) → see §3b-v | **171** | **71.8%** |
 | run20-repair | **v3 + date-token OCR repair** (`_repair_date_token` in `_collect_token_dates`: NO/N0→NOV in `dd-mon-yyyy`, glued `JUN25AUG26`→2 short dates, 2-digit-year expansion; frozen pipe cache — deterministic merge-only diff) → see §3b-vi | **175** | **73.5%** |
 | run21-clean | **v3 + corrupt single-digit-year reject** (`_corrupt_single_digit_year` in `merge_extractions`: `14.04.0`→NOT DETECTED, no fake 200x year; + audit golden sanity warn) — frozen pipe cache, deterministic merge-only diff → see §3b-vii | **175** | **73.5%** |
+| run22-crashfix | **v3 + None-component date guard** (`_full_key` in `_reconcile_date_ordering`: `parse_date` returns `(None, month)`/`(year, None)` — truthy tuples whose deep `>` comparison crashed; repair only fully-parsed pairs) — frozen pipe cache, deterministic merge-only diff → see §3b-viii | **175** | **73.5%** |
 
 - **run8-gate (deterministic, KEPT):** `_SEP_DATE_RE` no longer treats a bare
   space as a date separator, bare years restricted to 19xx/20xx, and numeric
@@ -367,6 +368,35 @@ Two layers pulled after run6; measured on the same golden set:
   honest maximum. (This corrects the "year read as single-zero" premise: the
   `0` was a lower-quality variant-pass read winning longest-string.)
 
+### 3b-viii. None-component date guard (run22_crashfix) — SHIPPED
+
+- **Problem (found by the pp2ctrl fresh audit run, product 9):** `parse_date`
+  can legitimately return `(None, month)` (`JAN` → `(None, 1)`, `SEP` →
+  `(None, 9)`) or `(year, None)` (`2026` → `(2026, None)`) — non-empty, so
+  **truthy** tuples. The guard `if pm and pe and pm > pe` therefore passed on
+  a `(None, …)` side and the deep tuple comparison crashed:
+  `'>' not supported between instances of 'NoneType' and 'int'`. A latent
+  crash in shipped merge code that the frozen baseline draw happened never to
+  produce; a fresh SLM draw exposed it mid-run.
+- **Fix (`_full_key`, `_reconcile_date_ordering` only):** compute a key
+  `(year, month)` **only when both components are non-None**, and attempt the
+  inversion repair only on two full keys. Equality branches (`pe == (y2, m2)`
+  etc.) were already safe. Physical invariant unchanged: a provably inverted
+  pair (mfg later than expiry, e.g. p15 `12/2025` + `01/2025`) still repairs;
+  a partially-parsed pair now no-ops instead of crashing.
+- **Measured (frozen pipe cache → deterministic merge-only diff):** re-run
+  after the fix = **byte-identical CSVs, 0 moves, 175/238 unchanged**. The
+  fix touches only the crash path; every healthy/inverted/empty combination
+  behaves as before. +2 tests (None-year, None-month); full suite **239
+  passed, 2 skipped**.
+- **Methodology note (3B SLM is not deterministic in practice):** a fresh
+  draw on *identical* OCR tokens moved ±3 merged cells (pp0 control: p29 exp
+  `ok→missing`, p23 manufacturer `wrong→ok`, p1 manufacturer `wrong→wrong`)
+  with the tally coincidentally stable at 175. All experiment-vs-baseline
+  diffs must therefore compare **fresh-draw vs fresh-draw** (pp2x/pp2ctrl
+  control), never experiment vs the frozen draw. The upscale experiment
+  verdict (adopt/reject) lands in §3b-ix when the runs finish.
+
 ## 4. Commands
 
 ```bash
@@ -409,6 +439,14 @@ k of one N together.
 
 ## 7. Recent shipped changes
 
+- **None-component date guard (2026-09-22, run22)**: `parse_date` can return
+  `(None, month)` / `(year, None)` — truthy tuples that crashed the deep
+  `pm > pe` comparison in `_reconcile_date_ordering` (`'>' not supported
+  between 'NoneType' and 'int'`), found by a fresh audit draw on product 9.
+  Inversion repair now requires both cells to fully parse to (year, month);
+  equality branches were already safe. **Golden audit 175/238 unchanged, 0
+  regressions** (byte-identical CSVs); +2 tests; suite 239 passed, 2 skipped.
+  See MEMORY.md §3b-viii.
 - **Corrupt single-digit-year reject + golden sanity (2026-09-22, run21)**:
   `merge_extractions` now blanks a date whose trailing numeric token is a
   single digit in a punctuation-joined date (`14.04.0` → NOT DETECTED) — a

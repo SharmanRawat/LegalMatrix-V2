@@ -362,10 +362,19 @@ def _reconcile_date_ordering(merged: Dict, results: List[Dict]) -> None:
     pe = parse_date(ce) if ce else None
     clean1 = re.sub(r"\s*([/-])\s*", r"\1", s1)
     clean2 = re.sub(r"\s*([/-])\s*", r"\1", s2)
+
+    # parse_date can legitimately return (None, month) or (year, None) — a
+    # *truthy* tuple, so `if pm and pe` does not filter it and the deep
+    # `pm > pe` comparison crashes on None components (pp2ctrl product 9).
+    # Repair only provable inversions: both cells fully parsed to year+month.
+    def _full_key(d):
+        return (d[0], d[1]) if d and d[0] is not None and d[1] is not None else None
+
+    kp, ke = _full_key(pm), _full_key(pe)
     if cm and ce:
         # Both present: only repair a physically impossible pair (mfg later
         # than expiry). Ordered or equal pairs are left alone.
-        if pm and pe and pm > pe and len(cands) == 2:
+        if kp and ke and kp > ke and len(cands) == 2:
             merged["manufacturing_date"] = clean1
             merged["expiry_date"] = clean2
     elif not cm and not ce:

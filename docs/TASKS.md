@@ -258,6 +258,19 @@ Still to do:
   were left alone; p1 `Pkd.10/08/26` is a real printed read mis-filed into
   mfg (golden blank) — kept, NOT a hallucination to suppress. See MEMORY.md
   §3b-vii.
+- **DONE (this session, run22_crashfix): None-component date guard.**
+  `parse_date` returns `(None, month)`/`(year, None)` for values like `JAN`,
+  `SEP`, `2026` — non-empty (truthy) tuples, so the `if pm and pe` guard in
+  `_reconcile_date_ordering` let a deep `pm > pe` comparison through and
+  crashed (`'>' not supported between 'NoneType' and 'int'`) on product 9 of
+  the fresh pp2ctrl audit run. The frozen baseline draw had never produced
+  that combination — a latent shipped-code crash that only a fresh full run
+  surfaced. Inversion repair now requires both cells fully parsed to
+  (year, month) via `_full_key`; equality branches already safe; p15-style
+  proven inversions still repair. Golden audit (frozen pipe cache):
+  **175/238 unchanged, byte-identical CSV, 0 regressions**; +2 tests
+  (None-year `JAN`/`12/2027`, None-month `2026`/`06/2026`); suite **239
+  passed, 2 skipped**. See MEMORY.md §3b-viii.
 - **DONE (this session): OCR upgrade decision CLOSED — keep bundled PP-OCRv3.**
   Both PP-OCRv4 variants were measured on the golden set and REJECTED:
   run15-v4mobile (151/238, 17 broken cells → §3b-ii) and run17-v4server on

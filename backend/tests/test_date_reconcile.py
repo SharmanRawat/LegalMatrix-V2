@@ -318,3 +318,34 @@ def test_corrupt_digit_year_never_touches_real_dates():
                         tokens=[])]
         merged = merge_extractions(results, ["back"])
         assert (merged.get("manufacturing_date") or "") == good, good
+
+
+# ── None-component date guard (pp2ctrl product-9 crash) ──────────────────────
+# parse_date can return (None, month) / (year, None) — *truthy* tuples that a
+# deep `pm > pe` comparison then crashes on ('>' not supported: NoneType vs int).
+# A fresh SLM draw on product 9 first hit this latent crash in shipped code; the
+# merge must no-op (never repair) unless BOTH cells parse fully to year+month.
+
+def test_none_year_parse_no_crash_and_no_repair():
+    """mfg 'JAN' parses to (None, 1): the old `pm and pe` guard passed (truthy
+    tuple) and `pm > pe` crashed on None vs int. Now: no repair, both fields
+    pass through unchanged."""
+    results = [
+        _res({"manufacturing_date": "JAN", "expiry_date": "12/2027"},
+             tokens=["01 / 2025", "02 / 2026"]),
+    ]
+    merged = merge_extractions(results, ["back"])
+    assert (merged.get("manufacturing_date") or "") == "JAN"
+    assert (merged.get("expiry_date") or "") == "12/2027"
+
+
+def test_none_month_parse_no_crash_and_no_repair():
+    """mfg '2026' parses to (2026, None): same-year deep tuple comparison
+    compared None against the expiry month and crashed. Now: no-op, unchanged."""
+    results = [
+        _res({"manufacturing_date": "2026", "expiry_date": "06/2026"},
+             tokens=["01 / 2025", "02 / 2026"]),
+    ]
+    merged = merge_extractions(results, ["back"])
+    assert (merged.get("manufacturing_date") or "") == "2026"
+    assert (merged.get("expiry_date") or "") == "06/2026"
