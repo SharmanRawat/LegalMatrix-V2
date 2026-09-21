@@ -258,6 +258,18 @@ Still to do:
   were left alone; p1 `Pkd.10/08/26` is a real printed read mis-filed into
   mfg (golden blank) — kept, NOT a hallucination to suppress. See MEMORY.md
   §3b-vii.
+- **DONE (this session, run23_upscale): whole-image 2× upscale + sharpen —
+  MEASURED AND REJECTED.** To settle Claude's final suggestion, ran a
+  full-field A/B: `pp2x` (`OCR_UPSCALE2X_SHARPEN=1`, fresh 2× OCR + fresh
+  SLM) vs `pp2ctrl` (`=0`, fresh native OCR + fresh SLM), both on the run22
+  fixed code, all 72 images / 290 rows. **Result: pp2x 154/238 vs pp2ctrl
+  168/238 vs frozen baseline 175/238.** A/B shows 27 regressions vs 27
+  recoveries (net −14); the sub-resolution date cells did NOT recover (p4
+  exp→garbage `410.00`, p16/p22/p28 dates unchanged-or-missing, p27 exp
+  `APR/2026` wrong vs golden) and previously-good dates were LOST (p10 mfg
+  `07/04/26`→blank, p10 exp `06/04/27`→`07/04/26`, p25 exp→blank, p14/p18
+  year-only partials→blank). The 0-regression bar is unreachable. **Scaffolding
+  reverted, tree byte-identical to `f024d4f`;** see MEMORY.md §3b-ix.
 - **DONE (this session, run22_crashfix): None-component date guard.**
   `parse_date` returns `(None, month)`/`(year, None)` for values like `JAN`,
   `SEP`, `2026` — non-empty (truthy) tuples, so the `if pm and pe` guard in

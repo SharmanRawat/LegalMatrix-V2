@@ -110,6 +110,7 @@ Two layers pulled after run6; measured on the same golden set:
 | run20-repair | **v3 + date-token OCR repair** (`_repair_date_token` in `_collect_token_dates`: NO/N0→NOV in `dd-mon-yyyy`, glued `JUN25AUG26`→2 short dates, 2-digit-year expansion; frozen pipe cache — deterministic merge-only diff) → see §3b-vi | **175** | **73.5%** |
 | run21-clean | **v3 + corrupt single-digit-year reject** (`_corrupt_single_digit_year` in `merge_extractions`: `14.04.0`→NOT DETECTED, no fake 200x year; + audit golden sanity warn) — frozen pipe cache, deterministic merge-only diff → see §3b-vii | **175** | **73.5%** |
 | run22-crashfix | **v3 + None-component date guard** (`_full_key` in `_reconcile_date_ordering`: `parse_date` returns `(None, month)`/`(year, None)` — truthy tuples whose deep `>` comparison crashed; repair only fully-parsed pairs) — frozen pipe cache, deterministic merge-only diff → see §3b-viii | **175** | **73.5%** |
+| run23-upscale | **whole-image 2× bicubic + sharpen** measured vs native control (`pp2x` 154 vs `pp2ctrl` 168; fresh-vs-fresh) — **REJECTED**: 27 regressions / 27 recoveries vs control, target dates un-recovered, previously-good dates lost; scaffolding reverted, tree ≡ `f024d4f` → see §3b-ix | 154 (meas.) | — |
 
 - **run8-gate (deterministic, KEPT):** `_SEP_DATE_RE` no longer treats a bare
   space as a date separator, bare years restricted to 19xx/20xx, and numeric
@@ -397,6 +398,45 @@ Two layers pulled after run6; measured on the same golden set:
   control), never experiment vs the frozen draw. The upscale experiment
   verdict (adopt/reject) lands in §3b-ix when the runs finish.
 
+### 3b-ix. Whole-image 2× upscale + sharpen experiment — MEASURED, REJECTED (run23)
+
+- **Hypothesis (Claude's):** upscaling the whole image 2× (bicubic) + sharpen
+  before OCR gives the recognizer more pixels per glyph, plausibly recovering
+  some of the sub-resolution date cells (p4/p16/p17/p22/p28). Honest odds
+  stated as ~20–30% for 2–4 cells, with regression risk.
+- **Design (user-approved):** ONE measured run, binary verdict — adopt iff
+  ≥1 recovery AND 0 regressions on the golden field. Two full fresh runs on
+  the fixed run22 code: `pp2x` (`OCR_UPSCALE2X_SHARPEN=1`, fresh 2× OCR +
+  fresh SLM) vs `pp2ctrl` (`=0`, fresh native OCR + fresh SLM) — the only
+  variable is the pixel input. Both completed clean, 72/72 images, 290/290
+  rows.
+- **Results (fresh-vs-fresh A/B):**
+  - tallies: frozen baseline **175**, pp2ctrl (native) **168**, pp2x (2×)
+    **154**.
+  - A/B `pp2x vs pp2ctrl`: 112 moved cells, **27 ok→non-ok regressions,
+    27 recoveries, net −14** — the upscale is strictly worse on every slice.
+  - The target sub-resolution dates did **not** recover: p4 exp read
+    garbage (`410.00`), p16/p22/p28 dates unchanged-or-missing, p27 exp read
+    `APR/2026` (wrong vs golden); previously-good dates were **lost**
+    (p10 mfg ok→blank, p10 exp ok→wrong, p25 exp wrong→blank, p14/p18
+    year-only partials blanked).
+  - direct vs shipped baseline: 16 regressions, 28 recoveries — already past
+    the 0-regression bar.
+- **Verdict: REJECT.** Whole-image 2× upscale + sharpen damages the CPU
+  recognizer broadly (stroke-width/box changes hurt PP-OCRv3 more than the
+  extra pixels help) and does not open the sub-resolution dates. Scaffolding
+  **fully reverted** — tree byte-identical to `f024d4f`, default OCR path
+  untouched.
+- **Bigger finding (pipeline variance):** the OCR itself is **non-deterministic
+  run-to-run** — onnxruntime multi-thread gives different boxes/text on the
+  *same* image (image1_back `Di Mart` conf 0.73 vs `DEMart` 0.67; 1px box
+  shifts across the board). Two nominally identical full runs (frozen native
+  vs pp2ctrl native) moved **90 cells / net −7**. The banked "±3 SLM noise"
+  (pp0, frozen tokens) was real but incomplete: fresh OCR multiplies the
+  drift, and 175/238 is one draw of a noisy process (an identical-config
+  re-run lands ~168± on this host). Any future claim about the golden number
+  must quote the run-to-run envelope, not the single draw.
+
 ## 4. Commands
 
 ```bash
@@ -439,6 +479,16 @@ k of one N together.
 
 ## 7. Recent shipped changes
 
+- **Whole-image 2× upscale + sharpen (2026-09-22, run23) — MEASURED, REJECTED**:
+  full-field A/B `pp2x` (2×+sharpen) vs `pp2ctrl` (native), both fresh OCR +
+  fresh SLM on the run22 code: **154 vs 168**, 27 regressions / 27 recoveries,
+  target sub-resolution dates (p4/p16/p17/p22/p28) NOT recovered and
+  previously-good dates lost (p10, p25, p14, p18). Bright spot: the control
+  exposed that **OCR is non-deterministic run-to-run** (onnxruntime
+  multi-thread; same image → `Di Mart` vs `DEMart`, box drift) — two identical
+  config full runs differ by ~90 cells / net −7, so 175/238 is one draw of a
+  noisy process (re-run lands ~168±). Scaffolding fully reverted; tree
+  byte-identical to `f024d4f`. See MEMORY.md §3b-ix.
 - **None-component date guard (2026-09-22, run22)**: `parse_date` can return
   `(None, month)` / `(year, None)` — truthy tuples that crashed the deep
   `pm > pe` comparison in `_reconcile_date_ordering` (`'>' not supported
