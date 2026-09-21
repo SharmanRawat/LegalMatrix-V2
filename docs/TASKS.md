@@ -47,6 +47,20 @@
       (Latin+Devanagari, OFL) so Hindi field values render correctly in the PDF
       (`backend/app/assets/fonts/` + `_font_for` script routing; `_sanitize` no longer
       latin-1-mangles non-Latin). PDF e2e test green; full suite 205 passed, 2 skipped.
+- [x] Hindi OCR wired end-to-end (`OCR_LANG` in `ocr_engine.py`): `en` default is
+      byte-identical bare RapidOCR; `hi` swaps to a Devanagari-only recognizer;
+      `bilingual` runs the Chinese PP-OCRv3 main engine + a Devanagari rec pass over
+      the SAME detection boxes, fused into tokens by iou>0.5 dedup (appends only new
+      readings). Devanagari model + char dict vendored in
+      `backend/app/assets/models/`. +8 tests (`tests/test_hindi_ocr.py`); full suite
+      **213 passed, 2 skipped**. **Live-dataset bilingual scan: Devanagari tokens
+      found on 10 of 72 real labels** (e.g. `आधकतमाखुदरमूलय` ≈ MRP, `भार्तमािनिमत` ≈
+      Made in India, `डाबर` = Dabur) — noisy but real bilingual value for dual-script
+      packs; recommended demo mode is bilingual.
+- [x] Hindi web-app UI: client-side i18n provider + hook (`frontend/app/lib/i18n.tsx`,
+      EN/HI dictionaries, `localStorage` persistence, hydration-safe), language toggle
+      in `Navbar`, and translated capture flow / live results / report / dashboard /
+      history / login. `npx tsc --noEmit` green.
 
 ## 2. Active ML loop (owner: ML pipeline, do NOT parallelise internally)
 
@@ -227,8 +241,10 @@ or any token (see MEMORY.md security note).
 ## 4. Backlog (after extraction is green)
 
 - [ ] E-commerce listing URL input (needs new extractor, rules 2027 country filter).
-- [ ] Hindi/Devanagari support: PDF rendering DONE (Hind font bundled, this session);
-      in progress: wire `OCR_LANG` into the OCR engine + Hindi web-UI toggle.
+- [x] Hindi/Devanagari support: PDF rendering (Hind font) ✓; `OCR_LANG` wiring (en /
+      hi / bilingual) ✓; web-app EN/HI toggle ✓ — all shipped this session. Remaining
+      questions in MEMORY.md §6 (Hindi accuracy target vs English; shaping/CTC polish
+      for the Devanagari rec pass on noisier reads).
 - [ ] Placement free-area auto-check from boxes (rules.json has the spec).
 - [ ] Postgres swap behind `repositories/` for multi-node.
 - [ ] PWA offline queue (store photo, sync when online).

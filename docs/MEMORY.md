@@ -295,3 +295,30 @@ k of one N together.
   `backend/app/assets/fonts/`; `_font_for` routes Devanagari strings to it and
   `_sanitize` stopped latin-1-mangling non-Latin text. Extraction pipeline untouched
   (166/238 baseline unaffected); suite 205 passed, 2 skipped.
+- **Hindi OCR (2026-09-22)**: `OCR_LANG` is functional in `ocr_engine.py` — `en`
+  (default; byte-identical bare `RapidOCR()`), `hi`/`hindi`/`devanagari`
+  (Devanagari-only swap), `bilingual`/`both`/`bi` (Chinese PP-OCRv3 main engine +
+  Devanagari rec pass over the SAME detection boxes, fused into tokens by iou>0.5
+  dedup, appending only new readings). Devanagari recognizer: ONNX
+  `tobiichioriguchi/devanagari_PP-OCRv3_mobile_rec_onnx` (9 MB, vendored
+  `backend/app/assets/models/`; char dict extracted from its `inference.yml`, 167
+  chars incl. देवनागरी digits ०-९). RapidOCR 1.2.3 cannot construct a dict-less
+  Devanagari rec, so `_build_deva_recognizer()` builds `TextRecognizer` directly
+  with `keys_path`. +8 tests (`tests/test_hindi_ocr.py`): suite **213 passed, 2
+  skipped**, default path verified byte-identical. **Live-dataset bilingual scan
+  (all 72 `images/*.jpg`): Devanagari tokens found on 10 of 72 real labels** —
+  e.g. image15_back `आधकतमाखुदरमूलय` (≈ अधिकतम खुदरा मूल्य / MRP), image4_back
+  `भार्तमािनिमत` (≈ भारत में निर्मित / Made in India), image14_front `डाबर`
+  (Dabur). Reads are noisy (no shaping/CTC-decode polish) but prove the bilingual
+  path genuinely fires on dual-script Indian packs and enriches the English token
+  stream; env-gated so the shipped default English path is untouched. Bilingual is
+  the recommended demo mode for dual-script labels.
+- **Hindi web app UI (2026-09-22)**: client-side i18n in `frontend/app/lib/i18n.tsx`
+  — `I18nProvider` (root layout, imported from the server layout) + `useI18n()`
+  hook (`t(key, vars)` interpolation + `tStatus` for COMPLIANT / REVIEW_REQUIRED /
+  POTENTIAL_VIOLATION), EN/HI dictionaries with English-key fallback, preference in
+  `localStorage` (`lm_lang`), `<html lang>` kept in sync; hydration-safe (defaults
+  to `en` until mount). Language toggle (हिंदी/EN) in `Navbar`. Translated: capture
+  flow, live results (declarations + overrides, radar, heat-map, violations,
+  consistency, font measurement, evidence hash, PDF/certificate/New Inspection),
+  full report page, dashboard, history, login. `npx tsc --noEmit` green.

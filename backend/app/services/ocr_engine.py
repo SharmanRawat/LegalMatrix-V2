@@ -14,15 +14,21 @@ import hashlib
 import logging
 import re
 import time
+from pathlib import Path
 from typing import Dict, List
 
 import cv2
 import numpy as np
 
 from app.config import (
+    BILINGUAL_LANGS,
+    DEVA_REC_KEYS_PATH,
+    DEVA_REC_MODEL_PATH,
     FIELD_CLASSIFIER_ENABLED,
+    HINDI_LANGS,
     OCR_ENHANCE_ENABLED,
     OCR_ENGINE,
+    OCR_LANG,
     OCR_MULTI_PASS_ENABLED,
     OCR_MULTI_PASS_ON_FAIL,
 )
@@ -335,6 +341,7 @@ def _merge_classifiers(llm: Dict, regex: Dict, lines: List[Dict]) -> Dict:
 class SmartOCRService:
     def __init__(self):
         self.engine_name = "none"
+        self._second_recognizer = None  # set for bilingual (deva rec) mode
         self._engine = self._load_engine()
         self.legacy = None
         if self._engine is None:
@@ -348,11 +355,42 @@ class SmartOCRService:
         self.regex_classifier = RegexFieldClassifier()
         self._prompt_hash = ""
 
+    def _build_deva_recognizer(self):
+        """A PP-OCRv3 mob Devanagari TextRecognizer (session + 167-char dict)."""
+        from rapidocr_onnxruntime.ch_ppocr_v3_rec.text_recognize import TextRecognizer  # type: ignore
+        return TextRecognizer({
+            "use_cuda": False,
+            "model_path": str(DEVA_REC_MODEL_PATH),
+            "rec_batch_num": 6,
+            "rec_img_shape": [3, 48, 320],
+            "keys_path": str(DEVA_REC_KEYS_PATH),
+        })
+
     def _load_engine(self):
         mode = OCR_ENGINE
         if mode in ("auto", "rapidocr"):
             try:
                 from rapidocr_onnxruntime import RapidOCR  # type: ignore
+                lang = (OCR_LANG or "en").lower()
+                deva_available = (
+                    Path(DEVA_REC_MODEL_PATH).exists()
+                    and Path(DEVA_REC_KEYS_PATH).exists()
+                )
+                if lang in BILINGUAL_LANGS and deva_available:
+                    # ch (en) main pass + Devanagari rec over the same det
+                    # boxes — reads dual-script labels in one shot.
+                    engine = RapidOCR()
+                    self._second_recognizer = self._build_deva_recognizer()
+                    self.engine_name = "rapidocr-bilingual"
+                    logger.info("RapidOCR engine ready (lang=%s, bilingual rec)", lang)
+                    return engine
+                if lang in HINDI_LANGS and deva_available:
+                    # Devanagari-only pass (same PP-OCRv3 det/cls, rec swapped).
+                    engine = RapidOCR()
+                    engine.text_recognizer = self._build_deva_recognizer()
+                    self.engine_name = f"rapidocr-{lang}"
+                    logger.info("RapidOCR engine ready (lang=%s, devanagari rec)", lang)
+                    return engine
                 engine = RapidOCR()
                 self.engine_name = "rapidocr"
                 logger.info("RapidOCR engine ready")
@@ -362,7 +400,10 @@ class SmartOCRService:
         if mode in ("auto", "paddleocr"):
             try:
                 from paddleocr import PaddleOCR  # type: ignore
-                engine = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
+                # Paddle supports selected languages via lang=; Hindi maps to
+                # devanagari script on supported versions, else stays 'en'.
+                paddle_lang = "devanagari" if (OCR_LANG or "en").lower() in HINDI_LANGS else "en"
+                engine = PaddleOCR(use_angle_cls=True, lang=paddle_lang, show_log=False)
                 self.engine_name = "paddleocr"
                 return engine
             except Exception as e:
@@ -638,6 +679,47 @@ class SmartOCRService:
     def _ocr_threadsafe(self, image_path):  # convenience alias
         return self._ocr_tokens(image_path)
 
+    def _devanagari_pass_tokens(self, img, sx, sy) -> List[Dict]:
+        """Bilingual pass: run the vendored Devanagari rec over the SAME det
+        boxes (det is shared/language-agnostic). Boxes scaled to original px."""
+        if self._second_recognizer is None:
+            return []
+        try:
+            dt_boxes, _ = self._engine.text_detector(img)
+            if dt_boxes is None or len(dt_boxes) == 0:
+                return []
+            dt_boxes = self._engine.sorted_boxes(dt_boxes)
+            crops = self._engine.get_crop_img_list(img, dt_boxes)
+            rec_res, _ = self._second_recognizer(crops)
+        except Exception as e:
+            logger.warning("devanagari OCR pass failed: %s", e)
+            return []
+        out = []
+        for box, res in zip(dt_boxes, rec_res):
+            try:
+                text = _postprocess_text(str(res[0] or ""))
+                conf = float(res[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if not text or conf < 0.45:
+                continue
+            try:
+                xs = [float(p[0]) for p in box]
+                ys = [float(p[1]) for p in box]
+            except (TypeError, IndexError, ValueError):
+                continue
+            x1, x2 = min(xs) * sx, max(xs) * sx
+            y1, y2 = min(ys) * sy, max(ys) * sy
+            if x2 - x1 < 3 or y2 - y1 < 3:
+                continue
+            out.append({
+                "text": text,
+                "box": [int(x1), int(y1), int(x2), int(y2)],
+                "conf": conf,
+                "variant": "deva",
+            })
+        return out
+
     def _ocr_tokens(self, image_path: str) -> List[Dict]:
         target = image_path
         applied = []
@@ -721,6 +803,13 @@ class SmartOCRService:
                 if len(rot_tokens) > len(best):
                     best = rot_tokens
             tokens = best
+        if self._second_recognizer is not None:
+            # Bilingual: add Devanagari reads over the same det boxes.
+            deva = self._devanagari_pass_tokens(
+                enh if enh is not None else orig, scale_x, scale_y)
+            for d in deva:
+                if not any(self._box_iou(d["box"], t["box"]) > 0.5 for t in tokens):
+                    tokens.append(d)
         return tokens
 
     def _regions_for_norm(self, tokens: List[Dict], line_map: Dict) -> Dict:

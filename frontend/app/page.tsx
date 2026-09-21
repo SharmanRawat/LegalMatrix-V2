@@ -11,6 +11,7 @@ import Navbar from '@/app/components/Navbar'
 import RadarChart from '@/app/components/RadarChart'
 import { api, apiError, downloadBlob, getUser } from '@/app/lib/api'
 import type { HeatmapInfo, RadarResult, SessionUser } from '@/app/lib/api'
+import { useI18n } from '@/app/lib/i18n'
 
 type LabelType = 'front' | 'back' | 'side' | 'top' | 'other'
 
@@ -96,6 +97,7 @@ interface InspectionResult {
 }
 
 export default function Home() {
+  const { t, tStatus } = useI18n()
   const [selectedImages, setSelectedImages] = useState<File[]>([])
   const [imageTypes, setImageTypes] = useState<LabelType[]>([])
   const [imagePreviews, setImagePreviews] = useState<string[]>([])
@@ -150,7 +152,7 @@ export default function Home() {
       }, 100)
 } catch (err: unknown) {
       console.error('Camera access failed:', err)
-      toast.error('Camera access denied. Use file upload instead.')
+      toast.error(t('Camera access denied. Use file upload instead.'))
   }
   }
 
@@ -196,7 +198,7 @@ export default function Home() {
       if (!blob) return
       const file = new File([blob], `capture_${Date.now()}.jpg`, { type: 'image/jpeg' })
       if (selectedImages.length >= MAX_IMAGES) {
-        toast.error(`Maximum ${MAX_IMAGES} images allowed`)
+        toast.error(t('Maximum {n} images allowed', { n: MAX_IMAGES }))
         return
       }
       const newImages = [...selectedImages, file]
@@ -212,7 +214,10 @@ export default function Home() {
         })
       })
       toast.success(
-        `Photo ${newImages.length} captured for ${LABEL_TYPES.find(t => t.id === captureTarget)?.label ?? captureTarget}`,
+        t('Photo {n} captured for {label}', {
+          n: newImages.length,
+          label: t(LABEL_TYPES.find((lt) => lt.id === captureTarget)?.label ?? captureTarget),
+        }),
       )
     }, 'image/jpeg', 0.92)
   }
@@ -221,7 +226,7 @@ export default function Home() {
     const files = Array.from(e.target.files || [])
     if (files.length === 0) return
     if (selectedImages.length + files.length > MAX_IMAGES) {
-      toast.error(`Maximum ${MAX_IMAGES} images allowed`)
+      toast.error(t('Maximum {n} images allowed', { n: MAX_IMAGES }))
       return
     }
 
@@ -233,7 +238,7 @@ export default function Home() {
     files.forEach((file, j) => {
       const idx = imagePreviews.length + j
       createPreview(file, (dataUrl) => {
-        if (!dataUrl) toast.error(`Couldn't preview "${file.name}" (unsupported image format?)`)
+        if (!dataUrl) toast.error(t("Couldn't preview \"{name}\" (unsupported image format?)", { name: file.name }))
         setImagePreviews(prev => {
           const next = [...prev]
           next[idx] = dataUrl
@@ -253,7 +258,7 @@ export default function Home() {
 
   const handleUpload = async () => {
     if (selectedImages.length === 0) {
-      toast.error('Please select or capture at least one image')
+      toast.error(t('Please select or capture at least one image'))
       return
     }
 
@@ -274,7 +279,7 @@ export default function Home() {
     try {
       const response = await api.post('/api/inspect', formData, { timeout: 600000 })
       setResult(response.data)
-      toast.success('Inspection completed!')
+      toast.success(t('Inspection completed!'))
       if (response.data?.inspection_id && response.data?.heatmaps?.length) {
         const urls = await Promise.all(
           (response.data.heatmaps as HeatmapInfo[]).map(async (h) => {
@@ -295,8 +300,8 @@ export default function Home() {
       console.error('Error:', error)
       const msg =
         (error as { code?: string } | null)?.code === 'ECONNABORTED'
-          ? 'Request timed out. The vision model can take several minutes.'
-          : apiError(error, 'Failed to inspect images.')
+          ? t('Request timed out. The vision model can take several minutes.')
+          : apiError(error, t('Failed to inspect images.'))
       toast.error(msg)
     } finally {
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
@@ -358,9 +363,9 @@ export default function Home() {
         delete next[key]
         return next
       })
-      toast.success(`${FIELD_LABELS[key] ?? key} corrected — score recalculated`)
+      toast.success(t('{field} corrected — score recalculated', { field: FIELD_LABELS[key] ?? key }))
     } catch (err) {
-      toast.error(apiError(err, 'Failed to save correction'))
+      toast.error(apiError(err, t('Failed to save correction')))
     } finally {
       setSavingFields((prev) => ({ ...prev, [key]: false }))
     }
@@ -385,10 +390,10 @@ export default function Home() {
       a.click()
       window.URL.revokeObjectURL(url)
       a.remove()
-      toast.success('PDF report downloaded!')
+      toast.success(t('PDF report downloaded!'))
     } catch (err) {
       console.error('PDF download failed:', err)
-      toast.error('Failed to download PDF report')
+      toast.error(t('Failed to download PDF report'))
     } finally {
       setDownloadingPdf(false)
     }
@@ -402,26 +407,26 @@ export default function Home() {
         `/api/inspect/${result.inspection_id}/certificate`,
         `LegalMatrix-Certificate-${result.inspection_id}.pdf`,
       )
-      toast.success('Certificate downloaded!')
+      toast.success(t('Certificate downloaded!'))
     } catch (err) {
       console.error('Certificate download failed:', err)
-      toast.error('Failed to download certificate')
+      toast.error(t('Failed to download certificate'))
     } finally {
       setDownloadingCert(false)
     }
   }
 
   const FIELD_LABELS: Record<string, string> = {
-    usp: 'Unit Sale Price',
-    mrp: 'MRP',
-    net_quantity: 'Net Quantity',
-    product_name: 'Product Name',
-    manufacturer: 'Manufacturer',
-    manufacturing_date: 'Manufacturing Date',
-    expiry_date: 'Expiry Date',
-    consumer_care: 'Consumer Care',
-    dimensions: 'Dimensions',
-    edible: 'Edibility (food?)',
+    usp: t('Unit Sale Price'),
+    mrp: t('MRP'),
+    net_quantity: t('Net Quantity'),
+    product_name: t('Product Name'),
+    manufacturer: t('Manufacturer'),
+    manufacturing_date: t('Manufacturing Date'),
+    expiry_date: t('Expiry Date'),
+    consumer_care: t('Consumer Care'),
+    dimensions: t('Dimensions'),
+    edible: t('Edibility (food?)'),
   }
 
   const getScoreColor = (score: number) => {
@@ -485,16 +490,14 @@ export default function Home() {
           <Shield className="w-8 h-8 text-blue-600" />
           <h1 className="text-3xl font-bold text-gray-900">LegalMatrix</h1>
         </div>
-        <p className="text-gray-600">AI-Powered Legal Metrology Inspection</p>
+        <p className="text-gray-600">{t('AI-Powered Legal Metrology Inspection')}</p>
       </header>
 
       {/* Upload / Capture Section */}
       <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
-        <h2 className="text-lg font-semibold text-gray-800 mb-1">Capture or Upload Product Images</h2>
+        <h2 className="text-lg font-semibold text-gray-800 mb-1">{t('Capture or Upload Product Images')}</h2>
         <p className="text-sm text-gray-500 mb-4">
-          Add photos per label type (up to {MAX_IMAGES} total · {totalImages} added). The inspection routes each
-          field to the right photo — product name from the <span className="font-medium text-gray-700">front</span>,
-          declarations from the <span className="font-medium text-gray-700">back</span>.
+          {t('Add photos per label type (up to {max} total · {added} added). The inspection routes each field to the right photo — product name from the front, declarations from the back.', { max: MAX_IMAGES, added: totalImages })}
         </p>
 
         {/* Camera View */}
@@ -502,7 +505,7 @@ export default function Home() {
           <div className="mb-4 rounded-lg overflow-hidden border border-gray-300 relative">
             <div className="absolute top-3 left-0 right-0 flex justify-center">
               <span className="bg-black/70 text-white text-xs font-semibold px-3 py-1 rounded-full">
-                Capturing for: {LABEL_TYPES.find(t => t.id === captureTarget)?.label ?? captureTarget}
+                {t('Capturing for:')} {t(LABEL_TYPES.find((lt) => lt.id === captureTarget)?.label ?? captureTarget)}
               </span>
             </div>
             <video ref={videoRef} className="w-full max-h-[400px] object-contain bg-black" autoPlay playsInline muted />
@@ -512,13 +515,13 @@ export default function Home() {
                 onClick={capturePhoto}
                 className="px-6 py-3 bg-green-600 text-white rounded-full hover:bg-green-700 shadow-lg flex items-center gap-2 font-semibold"
               >
-                <Camera className="w-5 h-5" /> Capture
+                <Camera className="w-5 h-5" /> {t('Capture')}
               </button>
               <button
                 onClick={stopCamera}
                 className="px-4 py-3 bg-gray-700 text-white rounded-full hover:bg-gray-800 shadow-lg flex items-center gap-2"
               >
-                <X className="w-5 h-5" /> Close
+                <X className="w-5 h-5" /> {t('Close')}
               </button>
             </div>
           </div>
@@ -537,10 +540,10 @@ export default function Home() {
               >
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div>
-                    <h3 className="text-sm font-semibold text-gray-800">{lt.label}</h3>
-                    <p className="text-xs text-gray-500">{lt.desc}</p>
+                    <h3 className="text-sm font-semibold text-gray-800">{t(lt.label)}</h3>
+                    <p className="text-xs text-gray-500">{t(lt.desc)}</p>
                     <p className={`text-xs mt-0.5 ${len > 0 ? 'text-blue-600 font-medium' : 'text-gray-400'}`}>
-                      {len} photo{len !== 1 ? 's' : ''}
+                      {len} {t(len !== 1 ? 'photos' : 'photo')}
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -549,12 +552,12 @@ export default function Home() {
                         onClick={() => startCamera(lt.id)}
                         className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-xs flex items-center gap-1.5 font-semibold"
                       >
-                        <Camera className="w-4 h-4" /> Capture
+                        <Camera className="w-4 h-4" /> {t('Capture')}
                       </button>
                     )}
                     <label className="cursor-pointer">
                       <div className="px-3 py-2 border border-gray-300 bg-white text-gray-700 rounded-lg hover:border-blue-500 hover:text-blue-600 text-xs flex items-center gap-1.5 font-semibold">
-                        <Upload className="w-4 h-4" /> Upload
+                        <Upload className="w-4 h-4" /> {t('Upload')}
                       </div>
                       <input
                         type="file"
@@ -605,7 +608,7 @@ export default function Home() {
 
         {loading && (
           <p className="text-xs text-gray-500 mt-3">
-            Vision-model inspection typically takes 1-3 min per image. The request is in flight.
+            {t('Vision-model inspection typically takes 1-3 min per image. The request is in flight.')}
           </p>
         )}
 
@@ -619,10 +622,9 @@ export default function Home() {
               className="mt-0.5 w-4 h-4 accent-blue-600"
             />
             <span className="text-sm text-gray-800">
-              I confirm all {totalImages} photo{totalImages !== 1 ? 's' : ''} show the{' '}
-              <span className="font-semibold">same product</span> being inspected.
+              {t('I confirm all {n} photos show the same product being inspected.', { n: totalImages })}
               <span className="block text-xs text-gray-500 mt-0.5">
-                Required before analyzing — mixing photos of different products gives a misleading compliance score.
+                {t('Required before analyzing — mixing photos of different products gives a misleading compliance score.')}
               </span>
             </span>
           </label>
@@ -638,17 +640,17 @@ export default function Home() {
             {loading ? (
               <>
                 <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
-                Analyzing... {elapsed}s
+                {t('Analyzing')}... {elapsed}s
               </>
             ) : (
               <>
                 <Scan className="w-4 h-4" />
-                Analyze
+                {t('Analyze')}
               </>
             )}
           </button>
           {totalImages > 0 && !sameProduct && (
-            <p className="text-xs text-amber-600">Confirm the photos show the same product, then analyze.</p>
+            <p className="text-xs text-amber-600">{t('Confirm the photos show the same product, then analyze.')}</p>
           )}
         </div>
       </section>
@@ -663,10 +665,10 @@ export default function Home() {
               <div className="flex items-center gap-3">
                 {getStatusIcon(result.status)}
                 <div>
-                  <h3 className="font-semibold text-lg">Status: {result.status.replace(/_/g, ' ')}</h3>
+                  <h3 className="font-semibold text-lg">{t('Status:')} {tStatus(result.status)}</h3>
                   <p className="text-sm opacity-80">
-                    ID: {result.inspection_id} | {result.images_processed} image(s) processed
-                    {result.method && <span className="ml-1">| Model: {result.method}</span>}
+                    {t('ID:')} {result.inspection_id} | {result.images_processed} {t('image(s) processed')}
+                    {result.method && <span className="ml-1">| {t('Model:')} {result.method}</span>}
                   </p>
                 </div>
               </div>
@@ -688,10 +690,10 @@ export default function Home() {
               </svg>
               <div className="absolute flex flex-col items-center justify-center" style={{ marginTop: '10px' }}>
                 <span className={`text-2xl font-bold ${getScoreColor(score)}`}>{score}%</span>
-                <span className="text-[10px] text-gray-500">Compliance</span>
+                <span className="text-[10px] text-gray-500">{t('Compliance')}</span>
               </div>
               <p className="text-xs text-gray-500 mt-2">
-                {result.passed_count}/{result.total_rules} rules passed
+                {result.passed_count}/{result.total_rules} {t('rules passed')}
               </p>
             </div>
           </div>
@@ -699,12 +701,10 @@ export default function Home() {
           {/* Compliance Radar */}
           {result.compliance_radar && (
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <h3 className="font-semibold text-gray-800 mb-4">Compliance Radar</h3>
+              <h3 className="font-semibold text-gray-800 mb-4">{t('Compliance Radar')}</h3>
               <RadarChart radar={result.compliance_radar} />
               <p className="mt-3 text-xs text-gray-400 leading-relaxed">
-                Axes weighed by legal impact (declarations 30%, pricing 20%, dates 10%,
-                consumer care 10%, font size 20%, readability 10%). The font-size axis is
-                excluded when no calibration reference (credit card / barcode) is present.
+                {t('Axes weighed by legal impact (declarations 30%, pricing 20%, dates 10%, consumer care 10%, font size 20%, readability 10%). The font-size axis is excluded when no calibration reference (credit card / barcode) is present.')}
               </p>
             </div>
           )}
@@ -712,10 +712,9 @@ export default function Home() {
           {/* Compliance heat-map overlay */}
           {result.heatmaps && result.heatmaps.length > 0 && (
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <h3 className="font-semibold text-gray-800 mb-1">Compliance Heat-Map</h3>
+              <h3 className="font-semibold text-gray-800 mb-1">{t('Compliance Heat-Map')}</h3>
               <p className="text-xs text-gray-500 mb-4">
-                Verdicts drawn back onto the photo — green = compliant, red = violation,
-                yellow = low confidence, cyan = calibration reference.
+                {t('Verdicts drawn back onto the photo — green = compliant, red = violation, yellow = low confidence, cyan = calibration reference.')}
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {result.heatmaps.map((h, i) => (
@@ -729,11 +728,11 @@ export default function Home() {
                       />
                     ) : (
                       <div className="w-full h-48 flex items-center justify-center text-gray-400 text-sm">
-                        Heat-map unavailable
+                        {t('Heat-map unavailable')}
                       </div>
                     )}
                     <figcaption className="px-3 py-2 text-xs text-gray-500 bg-white border-t border-gray-100">
-                      Photo {h.image_index + 1} heat-map
+                      {t('Photo {n} heat-map', { n: h.image_index + 1 })}
                     </figcaption>
                   </figure>
                 ))}
@@ -743,10 +742,10 @@ export default function Home() {
 
           {/* Extracted Declarations (editable — corrections re-score instantly) */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <h3 className="font-semibold text-gray-800 mb-1">Extracted Declarations</h3>
+            <h3 className="font-semibold text-gray-800 mb-1">{t('Extracted Declarations')}</h3>
             {result.extraction_confidence != null && (
               <div className="mb-3 flex items-center gap-2 text-xs">
-                <span className="font-medium text-gray-500">Extraction confidence</span>
+                <span className="font-medium text-gray-500">{t('Extraction confidence')}</span>
                 <span
                   className={`font-bold ${
                     result.extraction_confidence.overall >= 70
@@ -760,19 +759,17 @@ export default function Home() {
                 </span>
                 <span className="text-gray-400">
                   ({result.extraction_confidence.fields_present}/
-                  {result.extraction_confidence.fields_required} required fields)
+                  {result.extraction_confidence.fields_required} {t('required fields')})
                 </span>
               </div>
             )}
             {canEdit ? (
               <p className="text-xs text-gray-500 mb-3">
-                Click the pencil icon to correct a misread value. Saving re-runs the
-                compliance check and score immediately, and the correction is stored
-                with the inspection (original AI value kept for audit).
+                {t('Click the pencil icon to correct a misread value. Saving re-runs the compliance check and score immediately, and the correction is stored with the inspection (original AI value kept for audit).')}
               </p>
             ) : (
               <p className="text-xs text-gray-500 mb-3">
-                Sign in as ADMIN / INSPECTOR to correct misread values.
+                {t('Sign in as ADMIN / INSPECTOR to correct misread values.')}
               </p>
             )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -793,7 +790,7 @@ export default function Home() {
                       </span>
                       {overridden && (
                         <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 rounded px-1 py-0.5 inline-block mt-0.5">
-                          CORRECTED
+                          {t('CORRECTED')}
                         </span>
                       )}
                     </div>
@@ -807,7 +804,7 @@ export default function Home() {
                             if (e.key === 'Enter') saveField(key)
                             if (e.key === 'Escape') cancelEdit(key)
                           }}
-                          placeholder={value || 'Not detected — type a value'}
+                          placeholder={value || t('Not detected — type a value')}
                           className="w-full text-sm px-2 py-1 border border-gray-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
                         />
                         <div className="flex gap-2 mt-1">
@@ -816,25 +813,25 @@ export default function Home() {
                             disabled={isSaving}
                             className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
                           >
-                            <Save className="w-3 h-3" /> {isSaving ? 'Saving…' : 'Save'}
+                            <Save className="w-3 h-3" /> {isSaving ? t('Saving…') : t('Save')}
                           </button>
                           <button
                             onClick={() => cancelEdit(key)}
                             disabled={isSaving}
                             className="text-xs font-semibold px-2 py-1 rounded bg-white border border-gray-300 text-gray-600 hover:bg-gray-100"
                           >
-                            Cancel
+                            {t('Cancel')}
                           </button>
                         </div>
                       </div>
                     ) : (
                       <div className="flex-1 min-w-0">
                         <span className={`text-sm block break-words ${value ? 'text-gray-900' : 'text-red-400 italic'}`}>
-                          {value || 'Not detected'}
+                          {value || t('Not detected')}
                         </span>
                         {overridden && (
                           <p className="text-[11px] text-gray-400 mt-0.5">
-                            Original (AI): &quot;{overridden.original || ''}&quot;
+                            {t('Original (AI):')} &quot;{overridden.original || ''}&quot;
                           </p>
                         )}
                       </div>
@@ -842,7 +839,7 @@ export default function Home() {
                     {canEdit && !isEditing && (
                       <button
                         onClick={() => startEdit(key)}
-                        title={`Correct ${FIELD_LABELS[key] ?? key}`}
+                        title={t('Correct {field}', { field: FIELD_LABELS[key] ?? key })}
                         className="shrink-0 p-1.5 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
                       >
                         <Pencil className="w-4 h-4" />
@@ -853,12 +850,12 @@ export default function Home() {
               })}
             </div>
             <p className="mt-3 text-xs text-gray-500">
-              Corrections save automatically to inspection{' '}
+              {t('Corrections save automatically to inspection')}{' '}
               <span className="font-mono">{result.inspection_id}</span> —{' '}
               <Link href={`/inspection/${result.inspection_id}`} className="text-blue-600 hover:underline font-medium">
-                open the full report
+                {t('open the full report')}
               </Link>{' '}
-              for evidence photos, heat-maps and exports.
+              {t('for evidence photos, heat-maps and exports.')}
             </p>
           </div>
 
@@ -867,7 +864,7 @@ export default function Home() {
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
               <h3 className="font-semibold text-gray-800 mb-4 flex items-center gap-2">
                 <AlertTriangle className="w-5 h-5 text-orange-500" />
-                Rule Violations ({result.violations.length})
+                {t('Rule Violations ({n})', { n: result.violations.length })}
               </h3>
               <div className="space-y-3">
                 {result.violations.map((v, idx) => (
@@ -879,15 +876,15 @@ export default function Home() {
                             {v.severity}
                           </span>
                           <span className="text-xs font-mono font-semibold">{v.rule_no}</span>
-                          <span className="text-xs opacity-70">({v.status.replace(/_/g, ' ')})</span>
+                          <span className="text-xs opacity-70">({tStatus(v.status)})</span>
                         </div>
                         <p className="text-sm font-medium">{v.description}</p>
                         {v.extracted_value && (
-                          <p className="text-xs mt-1 opacity-70">Extracted: &quot;{v.extracted_value}&quot;</p>
+                          <p className="text-xs mt-1 opacity-70">{t('Extracted:')} &quot;{v.extracted_value}&quot;</p>
                         )}
                         {v.remediation && (
                           <p className="text-xs mt-1 italic">
-                            <span className="font-semibold">Fix:</span> {v.remediation}
+                            <span className="font-semibold">{t('Fix:')}</span> {v.remediation}
                           </p>
                         )}
                       </div>
@@ -902,8 +899,8 @@ export default function Home() {
           {result.violations && result.violations.length === 0 && (
             <div className="bg-green-50 rounded-xl border border-green-200 p-6 text-center">
               <CheckCircle className="w-10 h-10 text-green-600 mx-auto mb-2" />
-              <p className="font-semibold text-green-800">All Rules Passed</p>
-              <p className="text-sm text-green-600">No compliance violations detected.</p>
+              <p className="font-semibold text-green-800">{t('All Rules Passed')}</p>
+              <p className="text-sm text-green-600">{t('No compliance violations detected.')}</p>
             </div>
           )}
 
@@ -912,7 +909,7 @@ export default function Home() {
             <div className="bg-white rounded-xl shadow-sm border border-amber-200 p-6">
               <h3 className="font-semibold text-gray-800 mb-4 flex items-center gap-2">
                 <AlertTriangle className="w-5 h-5 text-amber-600" />
-                Consistency Checks ({result.misleading_checks.length})
+                {t('Consistency Checks ({n})', { n: result.misleading_checks.length })}
               </h3>
               <div className="space-y-3">
                 {result.misleading_checks.map((c, idx) => (
@@ -925,7 +922,7 @@ export default function Home() {
                     </div>
                     <p className="text-sm font-medium">{c.detail}</p>
                     {c.extracted_value && (
-                      <p className="text-xs mt-1 opacity-70">Extracted: &quot;{c.extracted_value}&quot;</p>
+                      <p className="text-xs mt-1 opacity-70">{t('Extracted:')} &quot;{c.extracted_value}&quot;</p>
                     )}
                   </div>
                 ))}
@@ -936,55 +933,55 @@ export default function Home() {
           {/* Font Measurement */}
           {result.font_measurement && result.font_measurement.status !== 'CANNOT_MEASURE' && (
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <h3 className="font-semibold text-gray-800 mb-4">Font Measurement</h3>
+              <h3 className="font-semibold text-gray-800 mb-4">{t('Font Measurement')}</h3>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                 <div>
-                  <p className="text-xs text-gray-500">Measured</p>
+                  <p className="text-xs text-gray-500">{t('Measured')}</p>
                   <p className="text-lg font-semibold">{result.font_measurement.measured_mm ?? '—'} mm</p>
                 </div>
                 <div>
-                  <p className="text-xs text-gray-500">Required</p>
+                  <p className="text-xs text-gray-500">{t('Required')}</p>
                   <p className="text-lg font-semibold">{result.font_measurement.required_mm ?? '—'} mm</p>
                 </div>
                 <div>
-                  <p className="text-xs text-gray-500">Uncertainty</p>
+                  <p className="text-xs text-gray-500">{t('Uncertainty')}</p>
                   <p className="text-lg font-semibold">±{result.font_measurement.uncertainty ?? '—'} mm</p>
                 </div>
                 <div>
-                  <p className="text-xs text-gray-500">Status</p>
+                  <p className="text-xs text-gray-500">{t('Status')}</p>
                   <p className={`text-lg font-semibold ${
                     result.font_measurement.status === 'COMPLIANT' ? 'text-green-600' :
                     result.font_measurement.status === 'REVIEW_REQUIRED' ? 'text-yellow-600' :
                     'text-red-600'
                   }`}>
-                    {result.font_measurement.status.replace(/_/g, ' ')}
+                    {tStatus(result.font_measurement.status)}
                   </p>
                 </div>
               </div>
               {result.font_measurement.implausible && (
                 <p className="mt-2 text-xs text-yellow-700 bg-yellow-50 border border-yellow-200 rounded px-2 py-1">
-                  Reading flagged implausible relative to the legal minimum — manual review.
+                  {t('Reading flagged implausible relative to the legal minimum — manual review.')}
                 </p>
               )}
               <p className="mt-2 text-[11px] text-gray-400">
-                Calibration: {result.font_measurement.calibration ?? '—'}
-                {result.font_measurement.ppm != null && ` at ${result.font_measurement.ppm} px/mm`}
-                {' · '}Method: {result.font_measurement.method ?? '—'}
+                {t('Calibration:')} {result.font_measurement.calibration ?? '—'}
+                {result.font_measurement.ppm != null && t(' at {n} px/mm', { n: result.font_measurement.ppm })}
+                {' · '}{t('Method:')} {result.font_measurement.method ?? '—'}
                 {result.font_measurement.image_index != null &&
-                  ` · Measured from photo #${result.font_measurement.image_index + 1}`}
+                  t(' · Measured from photo #{n}', { n: result.font_measurement.image_index + 1 })}
 </p>
             </div>
           )}
 
           {result.font_measurement && result.font_measurement.status === 'CANNOT_MEASURE' && (
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <h3 className="font-semibold text-gray-800 mb-2">Font Measurement</h3>
+              <h3 className="font-semibold text-gray-800 mb-2">{t('Font Measurement')}</h3>
               <p className="text-sm text-gray-700">
-                Cannot measure — manual review required.
+                {t('Cannot measure — manual review required.')}
               </p>
               {result.font_measurement.calibration_rejected_reason && (
                 <p className="mt-1 text-xs text-gray-500">
-                  Reason: {result.font_measurement.calibration_rejected_reason}
+                  {t('Reason:')} {result.font_measurement.calibration_rejected_reason}
                 </p>
               )}
             </div>
@@ -993,9 +990,9 @@ export default function Home() {
           {/* Evidence Hash */}
           {result.evidence?.hash && (
             <div className="bg-gray-50 rounded-xl border border-gray-200 p-4">
-              <h3 className="font-semibold text-gray-700 text-sm mb-2">Evidence Hash</h3>
+              <h3 className="font-semibold text-gray-700 text-sm mb-2">{t('Evidence Hash')}</h3>
               <div className="flex flex-col sm:flex-row gap-2 text-xs text-gray-500 break-all">
-                <span className="font-medium">SHA-256:</span>
+                <span className="font-medium">{t('SHA-256:')}</span>
                 <span>{result.evidence.hash}</span>
               </div>
             </div>
@@ -1011,12 +1008,12 @@ export default function Home() {
               {downloadingPdf ? (
                 <>
                   <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
-                  Generating PDF...
+                  {t('Generating PDF...')}
                 </>
               ) : (
                 <>
                   <Download className="w-4 h-4" />
-                  Download PDF Report
+                  {t('Download PDF Report')}
                 </>
               )}
             </button>
@@ -1028,12 +1025,12 @@ export default function Home() {
               {downloadingCert ? (
                 <>
                   <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
-                  Generating Certificate...
+                  {t('Generating Certificate...')}
                 </>
               ) : (
                 <>
                   <Shield className="w-4 h-4" />
-                  Certificate
+                  {t('Certificate')}
                 </>
               )}
             </button>
@@ -1050,7 +1047,7 @@ export default function Home() {
               }}
               className="flex-1 py-3 text-sm text-gray-600 hover:text-gray-800 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
             >
-              New Inspection
+              {t('New Inspection')}
             </button>
           </div>
         </section>
@@ -1072,7 +1069,7 @@ export default function Home() {
             />
             <div className="mt-3 flex items-center justify-between gap-3">
               <p className="text-white/90 text-sm">
-                Photo {viewingPreview + 1}
+                {t('Photo {n}', { n: viewingPreview + 1 })}
                 {selectedImages[viewingPreview] && (
                   <span className="opacity-70"> — {selectedImages[viewingPreview].name}</span>
                 )}
@@ -1081,7 +1078,7 @@ export default function Home() {
                 onClick={() => setViewingPreview(null)}
                 className="px-4 py-2 bg-white text-gray-900 rounded-lg font-semibold text-sm hover:bg-gray-200"
               >
-                Close
+                {t('Close')}
               </button>
             </div>
           </div>

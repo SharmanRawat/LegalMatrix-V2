@@ -7,6 +7,7 @@ import { Search, FileDown } from 'lucide-react'
 import toast, { Toaster } from 'react-hot-toast'
 import Navbar from '@/app/components/Navbar'
 import { api, apiError, getUser } from '@/app/lib/api'
+import { useI18n } from '@/app/lib/i18n'
 
 interface InspectionRow {
   id: string
@@ -33,6 +34,7 @@ const statusBadge: Record<string, string> = {
 
 export default function HistoryPage() {
   const router = useRouter()
+  const { t, tStatus } = useI18n()
   const [q, setQ] = useState('')
   const [status, setStatus] = useState('')
   const [productName, setProductName] = useState('')
@@ -66,7 +68,7 @@ export default function HistoryPage() {
       if ((err as { response?: { status?: number } })?.response?.status === 401) {
         router.replace('/login')
       } else {
-        toast.error(apiError(err, 'Search failed'))
+        toast.error(apiError(err, t('Search failed')))
       }
     } finally {
       if (resetPage) setLoading(false)
@@ -88,9 +90,9 @@ export default function HistoryPage() {
       a.download = `${id}.csv`
       a.click()
       window.URL.revokeObjectURL(url)
-      toast.success('CSV downloaded')
+      toast.success(t('CSV downloaded'))
     } catch {
-      toast.error('Export failed')
+      toast.error(t('Export failed'))
     }
   }
 
@@ -100,8 +102,8 @@ export default function HistoryPage() {
       <Toaster position="top-right" />
       <main className="max-w-5xl mx-auto p-4 sm:p-6 space-y-5">
         <header>
-          <h1 className="text-2xl font-bold text-gray-900">Inspection History</h1>
-          <p className="text-sm text-gray-500">Search previously scanned products and reports</p>
+          <h1 className="text-2xl font-bold text-gray-900">{t('Inspection History')}</h1>
+          <p className="text-sm text-gray-500">{t('Search previously scanned products and reports')}</p>
         </header>
 
         <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 space-y-3">
@@ -112,7 +114,7 @@ export default function HistoryPage() {
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && runSearch(true)}
-                placeholder="Search by ID, product name or manufacturer…"
+                placeholder={t('Search by ID, product name or manufacturer…')}
                 className="w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
@@ -121,7 +123,7 @@ export default function HistoryPage() {
               disabled={loading}
               className="px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-semibold"
             >
-              {loading ? 'Searching…' : 'Search'}
+              {loading ? t('Searching') + '…' : t('Search')}
             </button>
           </div>
 
@@ -131,21 +133,21 @@ export default function HistoryPage() {
               onChange={(e) => setStatus(e.target.value)}
               className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
             >
-              <option value="">All statuses</option>
-              <option value="COMPLIANT">Compliant</option>
-              <option value="REVIEW_REQUIRED">Review required</option>
-              <option value="POTENTIAL_VIOLATION">Potential violation</option>
+              <option value="">{t('All statuses')}</option>
+              <option value="COMPLIANT">{t('Compliant')}</option>
+              <option value="REVIEW_REQUIRED">{t('Review required')}</option>
+              <option value="POTENTIAL_VIOLATION">{t('Potential violation')}</option>
             </select>
             <input
               value={productName}
               onChange={(e) => setProductName(e.target.value)}
-              placeholder="Product name"
+              placeholder={t('Product name')}
               className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
             />
             <input
               value={manufacturer}
               onChange={(e) => setManufacturer(e.target.value)}
-              placeholder="Manufacturer"
+              placeholder={t('Manufacturer')}
               className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
             />
             <div className="flex gap-2">
@@ -168,7 +170,7 @@ export default function HistoryPage() {
         </section>
 
         <p className="text-sm text-gray-500">
-          {total} result{total !== 1 ? 's' : ''}
+          {total} {t(total === 1 ? 'result' : 'results')}
         </p>
 
         {loading ? (
@@ -177,18 +179,18 @@ export default function HistoryPage() {
           </div>
         ) : results.length === 0 ? (
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-10 text-center">
-            <p className="text-gray-500">No inspections found matching your filters.</p>
+            <p className="text-gray-500">{t('No inspections found matching your filters.')}</p>
           </div>
         ) : (
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
                 <tr>
-                  <th className="px-4 py-3">Inspection</th>
-                  <th className="px-4 py-3">Product / Maker</th>
-                  <th className="px-4 py-3">Score</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3 text-right">Actions</th>
+                  <th className="px-4 py-3">{t('Inspection')}</th>
+                  <th className="px-4 py-3">{t('Product / Maker')}</th>
+                  <th className="px-4 py-3">{t('Score')}</th>
+                  <th className="px-4 py-3">{t('Status')}</th>
+                  <th className="px-4 py-3 text-right">{t('Actions')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -209,7 +211,7 @@ export default function HistoryPage() {
                     </td>
                     <td className="px-4 py-3">
                       <span className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${statusBadge[r.status] || 'bg-gray-50'}`}>
-                        {r.status.replace(/_/g, ' ')}
+                        {tStatus(r.status)}
                       </span>
                     </td>
                     <td className="px-4 py-3">
@@ -224,7 +226,7 @@ export default function HistoryPage() {
                           href={`/inspection/${r.id}`}
                           className="text-xs px-2.5 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
                         >
-                          View
+                          {t('View')}
                         </Link>
                       </div>
                     </td>

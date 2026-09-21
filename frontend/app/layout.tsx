@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
 import ServiceWorkerRegister from '@/app/components/ServiceWorkerRegister'
+import { I18nProvider } from '@/app/lib/i18n'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -28,7 +29,7 @@ export default function RootLayout({
     <html lang="en">
       <body className={inter.className}>
         <main className="min-h-screen bg-gray-50">
-          {children}
+          <I18nProvider>{children}</I18nProvider>
         </main>
         <ServiceWorkerRegister />
       </body>

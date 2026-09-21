@@ -39,7 +39,22 @@ OCR_TIMEOUT_SECONDS = int(os.getenv("OCR_TIMEOUT_SECONDS", "180"))
 # New fast pipeline (OCR + lightweight LLM classifier)
 # OCR engine: "auto" | "rapidocr" | "paddleocr" | "vlm"
 OCR_ENGINE = os.getenv("OCR_ENGINE", "auto")
+# Script for OCR recognition: "en" (default, bundled PP-OCRv3 ch+en) or
+# "hi"/"hindi"/"devanagari" (swaps in the vendored Devanagari rec model —
+# same PP-OCRv3 det/cls, rec-only change) or "bilingual"/"both"/"bi"
+# (ch + Devanagari rec passes over the same boxes, for dual-script labels).
+# Default path stays byte-identical.
 OCR_LANG = os.getenv("OCR_LANG", "en")
+HINDI_LANGS = {"hi", "hindi", "devanagari"}
+BILINGUAL_LANGS = {"bilingual", "both", "bi"}
+DEVA_REC_MODEL_PATH = os.getenv(
+    "DEVA_REC_MODEL_PATH",
+    str(BASE_DIR / "app" / "assets" / "models" / "devanagari_PP-OCRv3_rec.onnx"),
+)
+DEVA_REC_KEYS_PATH = os.getenv(
+    "DEVA_REC_KEYS_PATH",
+    str(BASE_DIR / "app" / "assets" / "models" / "devanagari_dict.txt"),
+)
 # Lightweight text-only classifier (already pulled locally, ~2GB Q4)
 FIELD_CLASSIFIER_MODEL = os.getenv("FIELD_CLASSIFIER_MODEL", "qwen2.5:3b")
 FIELD_CLASSIFIER_ENABLED = os.getenv("FIELD_CLASSIFIER_ENABLED", "1") == "1"

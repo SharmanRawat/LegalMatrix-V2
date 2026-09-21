@@ -12,6 +12,7 @@ import Navbar from '@/app/components/Navbar'
 import RadarChart from '@/app/components/RadarChart'
 import { api, apiError, getUser, downloadBlob } from '@/app/lib/api'
 import type { HeatmapInfo, RadarResult, SessionUser } from '@/app/lib/api'
+import { useI18n } from '@/app/lib/i18n'
 
 interface Violation {
   rule_id: string
@@ -133,6 +134,7 @@ export default function InspectionDetailPage() {
   const params = useParams<{ id: string }>()
   const id = params.id
   const router = useRouter()
+  const { t, tStatus } = useI18n()
   const [data, setData] = useState<InspectionDetail | null>(null)
   const [images, setImages] = useState<{ url: string; name: string }[]>([])
   const [heatmapUrls, setHeatmapUrls] = useState<string[]>([])
@@ -175,9 +177,9 @@ export default function InspectionDetailPage() {
         delete next[key]
         return next
       })
-      toast.success(`${FIELD_LABELS[key] ?? key} corrected`)
+      toast.success(t('{field} corrected', { field: t(FIELD_LABELS[key] ?? key.replace(/_/g, ' ')) }))
     } catch (err) {
-      toast.error(apiError(err, 'Failed to save correction'))
+      toast.error(apiError(err, t('Failed to save correction')))
     } finally {
       setSavingFields((prev) => ({ ...prev, [key]: false }))
     }
@@ -224,7 +226,7 @@ export default function InspectionDetailPage() {
       })
       .catch((err: unknown) => {
         if ((err as { response?: { status?: number } })?.response?.status === 401) router.replace('/login')
-        else toast.error(apiError(err, 'Failed to load inspection'))
+        else toast.error(apiError(err, t('Failed to load inspection')))
       })
       .finally(() => setLoading(false))
   }, [id, router])
@@ -238,9 +240,9 @@ export default function InspectionDetailPage() {
       a.download = `${id}.${format}`
       a.click()
       window.URL.revokeObjectURL(url)
-      toast.success(`${format.toUpperCase()} exported`)
+      toast.success(t('{format} exported', { format: format.toUpperCase() }))
     } catch {
-      toast.error('Export failed')
+      toast.error(t('Export failed'))
     }
   }
 
@@ -250,9 +252,9 @@ export default function InspectionDetailPage() {
         `/api/inspect/${id}/certificate`,
         `LegalMatrix-Certificate-${id}.pdf`,
       )
-      toast.success('Certificate downloaded!')
+      toast.success(t('Certificate downloaded!'))
     } catch {
-      toast.error('Failed to download certificate')
+      toast.error(t('Failed to download certificate'))
     }
   }
 
@@ -264,7 +266,7 @@ export default function InspectionDetailPage() {
       <Toaster position="top-right" />
       <main className="max-w-5xl mx-auto p-4 sm:p-6 space-y-5">
         <Link href="/history" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-800">
-          <ArrowLeft className="w-4 h-4" /> Back to history
+          <ArrowLeft className="w-4 h-4" /> {t('Back to history')}
         </Link>
 
         {loading && (
@@ -280,7 +282,7 @@ export default function InspectionDetailPage() {
                 <div className="flex items-center gap-3">
                   {statusIcon(data.status)}
                   <div>
-                    <h1 className="text-xl font-bold">Status: {data.status.replace(/_/g, ' ')}</h1>
+                    <h1 className="text-xl font-bold">{t('Status:')} {tStatus(data.status)}</h1>
                     <p className="text-sm opacity-80">
                       {data.inspection_id} • {new Date(data.timestamp).toLocaleString()}
                       {data.method && <span> • Model: {data.method}</span>}
@@ -290,14 +292,14 @@ export default function InspectionDetailPage() {
                 <div className="text-center sm:text-right">
                   <p className="text-3xl font-bold">{score}%</p>
                   <p className="text-xs opacity-80">
-                    {data.passed_count}/{data.total_rules} rules passed
+                    {data.passed_count}/{data.total_rules} {t('rules passed')}
                   </p>
                 </div>
               </div>
             </header>
 
             <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-              <h3 className="font-semibold text-gray-800 mb-3">Evidence Photos</h3>
+              <h3 className="font-semibold text-gray-800 mb-3">{t('Evidence Photos')}</h3>
               {images.length > 0 ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   {images.map((img, i) => (
@@ -307,7 +309,7 @@ export default function InspectionDetailPage() {
                         <img src={img.url} alt={img.name} className="w-full h-48 object-contain bg-white" />
                       ) : (
                         <div className="w-full h-48 flex items-center justify-center text-gray-400 text-sm">
-                          Image unavailable
+                          {t('Image unavailable')}
                         </div>
                       )}
                       <figcaption className="px-3 py-2 text-xs text-gray-500 bg-white border-t border-gray-100 truncate">
@@ -317,21 +319,21 @@ export default function InspectionDetailPage() {
                   ))}
                 </div>
               ) : (
-                <p className="text-sm text-gray-400">No evidence images stored.</p>
+                <p className="text-sm text-gray-400">{t('No evidence images stored.')}</p>
               )}
               {data.evidence?.hash && (
                 <p className="mt-3 text-[11px] text-gray-400 break-all">
-                  Evidence SHA-256: {data.evidence.hash}
+                  {t('Evidence SHA-256:')} {data.evidence.hash}
                 </p>
               )}
             </section>
 
             <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-              <h3 className="font-semibold text-gray-800 mb-1">Extracted Declarations</h3>
+              <h3 className="font-semibold text-gray-800 mb-1">{t('Extracted Declarations')}</h3>
               {data.extraction_confidence && (
                 <div className="mb-3 rounded-lg bg-indigo-50 border border-indigo-100 px-3 py-2 flex items-center gap-3">
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-indigo-700">Extraction confidence</span>
+                    <span className="text-xs font-medium text-indigo-700">{t('Extraction confidence')}</span>
                     <span
                       className={`text-sm font-bold ${
                         data.extraction_confidence.overall >= 70
@@ -358,17 +360,16 @@ export default function InspectionDetailPage() {
                   </div>
                   <span className="text-[11px] text-indigo-600 whitespace-nowrap">
                     {data.extraction_confidence.fields_present}/
-                    {data.extraction_confidence.fields_required} required fields
+                    {data.extraction_confidence.fields_required} {t('required fields')}
                   </span>
                 </div>
               )}
               {canEdit ? (
                 <p className="text-xs text-gray-500 mb-3">
-                  Click a value to correct an AI reading. Corrections are saved to the
-                  inspection, rules are re-evaluated, and the original value is kept for audit.
+                  {t('Click a value to correct an AI reading. Corrections are saved to the inspection, rules are re-evaluated, and the original value is kept for audit.')}
                 </p>
               ) : (
-                <p className="text-xs text-gray-500 mb-3">Read-only (ADMIN / INSPECTOR can correct values).</p>
+                <p className="text-xs text-gray-500 mb-3">{t('Read-only (ADMIN / INSPECTOR can correct values).')}</p>
               )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {Object.entries(data.declarations ?? {}).map(([key, value]) => {
@@ -384,11 +385,11 @@ export default function InspectionDetailPage() {
                     >
                       <div className="min-w-[120px] shrink-0">
                         <span className="text-sm font-medium text-gray-600 capitalize block">
-                          {FIELD_LABELS[key] ?? key.replace(/_/g, ' ')}:
+                          {t(FIELD_LABELS[key] ?? key.replace(/_/g, ' '))}:
                         </span>
                         {overridden && (
                           <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 rounded px-1 py-0.5 inline-block mt-0.5">
-                            MANUALLY CORRECTED
+                            {t('MANUALLY CORRECTED')}
                           </span>
                         )}
                       </div>
@@ -402,7 +403,7 @@ export default function InspectionDetailPage() {
                               if (e.key === 'Enter') saveField(key)
                               if (e.key === 'Escape') cancelEdit(key)
                             }}
-                            placeholder={value || 'Not detected — type a value'}
+                            placeholder={value || t('Not detected — type a value')}
                             className="w-full text-sm px-2 py-1 border border-gray-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
                           />
                           <div className="flex gap-2 mt-1">
@@ -411,14 +412,14 @@ export default function InspectionDetailPage() {
                               disabled={isSaving}
                               className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
                             >
-                              <Save className="w-3 h-3" /> {isSaving ? 'Saving…' : 'Save'}
+                              <Save className="w-3 h-3" /> {isSaving ? t('Saving…') : t('Save')}
                             </button>
                             <button
                               onClick={() => cancelEdit(key)}
                               disabled={isSaving}
                               className="text-xs font-semibold px-2 py-1 rounded bg-white border border-gray-300 text-gray-600 hover:bg-gray-100"
                             >
-                              Cancel
+                              {t('Cancel')}
                             </button>
                           </div>
                         </div>
@@ -429,11 +430,11 @@ export default function InspectionDetailPage() {
                               value ? 'text-gray-900' : 'text-red-400 italic'
                             }`}
                           >
-                            {value || 'Not detected'}
+                            {value || t('Not detected')}
                           </span>
                           {overridden && (
                             <p className="text-[11px] text-gray-400 mt-0.5">
-                              Original (AI): &quot;{overridden.original || ''}&quot;
+                              {t('Original (AI):')} &quot;{overridden.original || ''}&quot;
                             </p>
                           )}
                           {(() => {
@@ -463,7 +464,7 @@ export default function InspectionDetailPage() {
                       {canEdit && !isEditing && (
                         <button
                           onClick={() => startEdit(key)}
-                          title={`Correct ${FIELD_LABELS[key] ?? key}`}
+                          title={t('Correct {field}', { field: t(FIELD_LABELS[key] ?? key.replace(/_/g, ' ')) })}
                           className="shrink-0 p-1.5 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
                         >
                           <Pencil className="w-4 h-4" />
@@ -477,15 +478,15 @@ export default function InspectionDetailPage() {
 
             {data.font_measurement && (
               <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-                <h3 className="font-semibold text-gray-800 mb-3">Font Size &amp; Readability</h3>
+                <h3 className="font-semibold text-gray-800 mb-3">{t('Font Size & Readability')}</h3>
                 {data.font_measurement.status === 'CANNOT_MEASURE' ? (
                   <div className="rounded-lg bg-gray-50 border border-gray-200 p-3">
                     <p className="text-sm font-medium text-gray-800">
-                      Cannot measure — manual review required.
+                      {t('Cannot measure — manual review required.')}
                     </p>
                     {data.font_measurement.calibration_rejected_reason && (
                       <p className="mt-1 text-xs text-gray-500">
-                        Reason: {data.font_measurement.calibration_rejected_reason}
+                        {t('Reason:')} {data.font_measurement.calibration_rejected_reason}
                       </p>
                     )}
                   </div>
@@ -493,51 +494,49 @@ export default function InspectionDetailPage() {
                   <>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                       <div>
-                        <p className="text-xs text-gray-500">Measured</p>
+                        <p className="text-xs text-gray-500">{t('Measured')}</p>
                         <p className="text-lg font-semibold">
                           {data.font_measurement.measured_mm ?? '—'} mm
                         </p>
                       </div>
                       <div>
-                        <p className="text-xs text-gray-500">Required</p>
+                        <p className="text-xs text-gray-500">{t('Required')}</p>
                         <p className="text-lg font-semibold">
                           {data.font_measurement.required_mm ?? '—'} mm
                         </p>
                       </div>
                       <div>
-                        <p className="text-xs text-gray-500">Uncertainty</p>
+                        <p className="text-xs text-gray-500">{t('Uncertainty')}</p>
                         <p className="text-lg font-semibold">
                           ±{data.font_measurement.uncertainty ?? '—'} mm
                         </p>
                       </div>
                       <div>
-                        <p className="text-xs text-gray-500">Status</p>
+                        <p className="text-xs text-gray-500">{t('Status')}</p>
                         <p className={`text-lg font-semibold ${
                           data.font_measurement.status === 'COMPLIANT' ? 'text-green-600' :
                           data.font_measurement.status === 'REVIEW_REQUIRED' ? 'text-yellow-600' : 'text-red-600'
                         }`}>
-                          {data.font_measurement.status.replace(/_/g, ' ')}
+                          {tStatus(data.font_measurement.status)}
                         </p>
                       </div>
                     </div>
                     {data.font_measurement.implausible && (
                       <p className="mt-2 text-xs text-yellow-700 bg-yellow-50 border border-yellow-200 rounded px-2 py-1">
-                        Reading flagged implausible relative to the legal minimum — box may have
-                        hit the wrong text. Manual review.
+                        {t('Reading flagged implausible relative to the legal minimum — box may have hit the wrong text. Manual review.')}
                       </p>
                     )}
                     {data.font_measurement.box_rejected_reason && (
                       <p className="mt-2 text-xs text-gray-500">
-                        VLM text box rejected ({data.font_measurement.box_rejected_reason}) —
-                        value is informational only.
+                        {t('VLM text box rejected ({reason}) — value is informational only.', { reason: data.font_measurement.box_rejected_reason })}
                       </p>
                     )}
                     <p className="mt-2 text-[11px] text-gray-400">
-                      Calibration: {data.font_measurement.calibration ?? '—'}
-                      {data.font_measurement.ppm != null && ` at ${data.font_measurement.ppm} px/mm`}
-                      {' · '}Method: {data.font_measurement.method ?? '—'}
+                      {t('Calibration:')} {data.font_measurement.calibration ?? '—'}
+                      {data.font_measurement.ppm != null && t(' at {n} px/mm', { n: data.font_measurement.ppm })}
+                      {' · '}{t('Method:')} {data.font_measurement.method ?? '—'}
                       {data.font_measurement.image_index != null &&
-                        ` · Measured from photo #${data.font_measurement.image_index + 1}`}
+                        t(' · Measured from photo #{n}', { n: data.font_measurement.image_index + 1 })}
                     </p>
                   </>
                 )}
@@ -546,21 +545,19 @@ export default function InspectionDetailPage() {
 
             {data.compliance_radar && (
               <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-                <h3 className="font-semibold text-gray-800 mb-3">Compliance Radar</h3>
+                <h3 className="font-semibold text-gray-800 mb-3">{t('Compliance Radar')}</h3>
                 <RadarChart radar={data.compliance_radar} />
                 <p className="mt-3 text-xs text-gray-400">
-                  Font-size axis is excluded when no calibration reference (credit card /
-                  barcode) is present — the axis is unknown, not a violation.
+                  {t('Font-size axis is excluded when no calibration reference (credit card / barcode) is present — the axis is unknown, not a violation.')}
                 </p>
               </section>
             )}
 
             {data.heatmaps && data.heatmaps.length > 0 && (
               <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-                <h3 className="font-semibold text-gray-800 mb-1">Compliance Heat-Map</h3>
+                <h3 className="font-semibold text-gray-800 mb-1">{t('Compliance Heat-Map')}</h3>
                 <p className="text-xs text-gray-500 mb-3">
-                  Verdicts drawn onto each photo — green = compliant, red = violation,
-                  yellow = low confidence, cyan = calibration reference.
+                  {t('Verdicts drawn onto each photo — green = compliant, red = violation, yellow = low confidence, cyan = calibration reference.')}
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {data.heatmaps.map((h, i) => (
@@ -574,11 +571,11 @@ export default function InspectionDetailPage() {
                         />
                       ) : (
                         <div className="w-full h-48 flex items-center justify-center text-gray-400 text-sm">
-                          Heat-map unavailable
+                          {t('Heat-map unavailable')}
                         </div>
                       )}
                       <figcaption className="px-3 py-2 text-xs text-gray-500 bg-white border-t border-gray-100">
-                        Photo {h.image_index + 1} heat-map
+                        {t('Photo {n} heat-map', { n: h.image_index + 1 })}
                       </figcaption>
                     </figure>
                   ))}
@@ -589,7 +586,7 @@ export default function InspectionDetailPage() {
             <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
               <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
                 <AlertTriangle className="w-5 h-5 text-orange-500" />
-                Rule Violations ({data.violations?.length ?? 0})
+                {t('Rule Violations ({n})', { n: data.violations?.length ?? 0 })}
               </h3>
               {data.violations && data.violations.length > 0 ? (
                 <div className="space-y-3">
@@ -598,15 +595,15 @@ export default function InspectionDetailPage() {
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-xs font-bold px-2 py-0.5 rounded bg-white/60 border">{v.severity}</span>
                         <span className="text-xs font-mono font-semibold">{v.rule_no}</span>
-                        <span className="text-xs opacity-70">({v.status.replace(/_/g, ' ')})</span>
+                        <span className="text-xs opacity-70">({tStatus(v.status)})</span>
                       </div>
                       <p className="text-sm font-medium">{v.description}</p>
                       {v.extracted_value && (
-                        <p className="text-xs mt-1 opacity-70">Extracted: &quot;{v.extracted_value}&quot;</p>
+                        <p className="text-xs mt-1 opacity-70">{t('Extracted:')} &quot;{v.extracted_value}&quot;</p>
                       )}
                       {v.remediation && (
                         <p className="text-xs mt-1 italic">
-                          <span className="font-semibold">Fix:</span> {v.remediation}
+                          <span className="font-semibold">{t('Fix:')}</span> {v.remediation}
                         </p>
                       )}
                     </div>
@@ -615,7 +612,7 @@ export default function InspectionDetailPage() {
               ) : (
                 <div className="text-center py-6 bg-green-50 rounded-lg border border-green-200">
                   <CheckCircle className="w-8 h-8 text-green-600 mx-auto mb-1" />
-                  <p className="font-semibold text-green-800">All rules passed</p>
+                  <p className="font-semibold text-green-800">{t('All rules passed')}</p>
                 </div>
               )}
             </section>
@@ -624,7 +621,7 @@ export default function InspectionDetailPage() {
               <section className="bg-white rounded-xl shadow-sm border border-orange-200 p-5">
                 <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
                   <AlertTriangle className="w-5 h-5 text-amber-600" />
-                  Consistency Checks ({data.misleading_checks.length})
+                  {t('Consistency Checks ({n})', { n: data.misleading_checks.length })}
                 </h3>
                 <div className="space-y-3">
                   {data.misleading_checks.map((c, idx) => (
@@ -635,7 +632,7 @@ export default function InspectionDetailPage() {
                       </div>
                       <p className="text-sm font-medium">{c.detail}</p>
                       {c.extracted_value && (
-                        <p className="text-xs mt-1 opacity-70">Extracted: &quot;{c.extracted_value}&quot;</p>
+                        <p className="text-xs mt-1 opacity-70">{t('Extracted:')} &quot;{c.extracted_value}&quot;</p>
                       )}
                     </div>
                   ))}
@@ -648,19 +645,19 @@ export default function InspectionDetailPage() {
                 onClick={() => downloadExport('json')}
                 className="flex-1 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2 font-semibold"
               >
-                <FileJson className="w-4 h-4" /> Export JSON
+                <FileJson className="w-4 h-4" /> {t('Export JSON')}
               </button>
               <button
                 onClick={() => downloadExport('csv')}
                 className="flex-1 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center justify-center gap-2 font-semibold"
               >
-                <FileDown className="w-4 h-4" /> Export CSV
+                <FileDown className="w-4 h-4" /> {t('Export CSV')}
               </button>
             <button
                 onClick={downloadCertificate}
                 className="flex-1 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center justify-center gap-2 font-semibold"
               >
-                <FileDown className="w-4 h-4" /> Certificate
+                <FileDown className="w-4 h-4" /> {t('Certificate')}
               </button>
             </div>
           </>

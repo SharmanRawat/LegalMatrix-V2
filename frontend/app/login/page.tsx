@@ -5,9 +5,11 @@ import { useRouter } from 'next/navigation'
 import { Shield, Lock, User as UserIcon } from 'lucide-react'
 import toast, { Toaster } from 'react-hot-toast'
 import { api, apiError, setSession } from '@/app/lib/api'
+import { useI18n } from '@/app/lib/i18n'
 
 export default function LoginPage() {
   const router = useRouter()
+  const { t } = useI18n()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -15,17 +17,17 @@ export default function LoginPage() {
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!username || !password) {
-      toast.error('Enter username and password')
+      toast.error(t('Enter username and password'))
       return
     }
     setLoading(true)
     try {
       const { data } = await api.post('/api/auth/login', { username, password })
       setSession(data.token, data.user)
-      toast.success(`Welcome, ${data.user.name || data.user.username}!`)
+      toast.success(t('Welcome, {name}!', { name: data.user.name || data.user.username }))
       router.push('/dashboard')
     } catch (err: unknown) {
-      toast.error(apiError(err, 'Login failed'))
+      toast.error(apiError(err, t('Login failed')))
     } finally {
       setLoading(false)
     }
@@ -40,12 +42,12 @@ export default function LoginPage() {
             <Shield className="w-9 h-9 text-blue-600" />
             <h1 className="text-2xl font-bold text-gray-900">LegalMatrix</h1>
           </div>
-          <p className="text-sm text-gray-500">Legal Metrology Compliance Inspection</p>
+          <p className="text-sm text-gray-500">{t('Legal Metrology Compliance Inspection')}</p>
         </div>
 
         <form onSubmit={onSubmit} className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('Username')}</label>
             <div className="relative">
               <UserIcon className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
@@ -58,7 +60,7 @@ export default function LoginPage() {
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('Password')}</label>
             <div className="relative">
               <Lock className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
@@ -76,10 +78,10 @@ export default function LoginPage() {
             disabled={loading}
             className="w-full py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-semibold"
           >
-            {loading ? 'Signing in…' : 'Sign in'}
+            {loading ? t('Signing in…') : t('Sign in')}
           </button>
           <p className="text-[11px] text-gray-400 text-center">
-            Default demo account: admin / admin@123
+            {t('Default demo account: admin / admin@123')}
           </p>
         </form>
       </div>

@@ -7,6 +7,7 @@ import { ClipboardList, AlertCircle, TrendingUp } from 'lucide-react'
 import toast, { Toaster } from 'react-hot-toast'
 import Navbar from '@/app/components/Navbar'
 import { api, apiError, getUser } from '@/app/lib/api'
+import { useI18n } from '@/app/lib/i18n'
 
 interface Recent {
   id: string
@@ -41,6 +42,7 @@ const statusBg: Record<string, string> = {
 
 export default function DashboardPage() {
   const router = useRouter()
+  const { t, tStatus } = useI18n()
   const [stats, setStats] = useState<Stats | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -56,7 +58,7 @@ export default function DashboardPage() {
         if ((err as { response?: { status?: number } })?.response?.status === 401) {
           router.replace('/login')
         } else {
-          toast.error(apiError(err, 'Failed to load dashboard'))
+          toast.error(apiError(err, t('Failed to load dashboard')))
         }
       })
       .finally(() => setLoading(false))
@@ -71,8 +73,8 @@ export default function DashboardPage() {
       <Toaster position="top-right" />
       <main className="max-w-5xl mx-auto p-4 sm:p-6 space-y-6">
         <header>
-          <h1 className="text-2xl font-bold text-gray-900">Compliance Dashboard</h1>
-          <p className="text-sm text-gray-500">Live overview of all inspections</p>
+          <h1 className="text-2xl font-bold text-gray-900">{t('Compliance Dashboard')}</h1>
+          <p className="text-sm text-gray-500">{t('Live overview of all inspections')}</p>
         </header>
 
         {loading && (
@@ -91,7 +93,7 @@ export default function DashboardPage() {
                   </div>
                   <div>
                     <p className="text-2xl font-bold text-gray-900">{total}</p>
-                    <p className="text-xs text-gray-500">Total Inspections</p>
+                    <p className="text-xs text-gray-500">{t('Total Inspections')}</p>
                   </div>
                 </div>
               </div>
@@ -104,7 +106,7 @@ export default function DashboardPage() {
                     <p className="text-2xl font-bold text-gray-900">
                       {stats?.avg_compliance_score ?? 0}%
                     </p>
-                    <p className="text-xs text-gray-500">Avg Compliance Score</p>
+                    <p className="text-xs text-gray-500">{t('Avg Compliance Score')}</p>
                   </div>
                 </div>
               </div>
@@ -118,7 +120,7 @@ export default function DashboardPage() {
                       {Object.values(stats?.by_status ?? {}).reduce((a, b) => a + b, 0) -
                         (stats?.by_status.COMPLIANT ?? 0)}
                     </p>
-                    <p className="text-xs text-gray-500">Non-Compliant</p>
+                    <p className="text-xs text-gray-500">{t('Non-Compliant')}</p>
                   </div>
                 </div>
               </div>
@@ -126,14 +128,14 @@ export default function DashboardPage() {
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-                <h3 className="font-semibold text-gray-800 mb-4">Status Breakdown</h3>
+                <h3 className="font-semibold text-gray-800 mb-4">{t('Status Breakdown')}</h3>
                 <div className="space-y-3">
                   {(Object.entries(stats?.by_status ?? {}) as [string, number][]).map(
                     ([status, count]) => (
                       <div key={status}>
                         <div className="flex justify-between text-sm mb-1">
                           <span className={`font-medium ${statusColor[status] || 'text-gray-600'}`}>
-                            {status.replace(/_/g, ' ')}
+                            {tStatus(status)}
                           </span>
                           <span className="text-gray-500">{count}</span>
                         </div>
@@ -153,13 +155,13 @@ export default function DashboardPage() {
                     ),
                   )}
                   {Object.keys(stats?.by_status ?? {}).length === 0 && (
-                    <p className="text-sm text-gray-400">No inspections yet.</p>
+                    <p className="text-sm text-gray-400">{t('No inspections yet.')}</p>
                   )}
                 </div>
               </div>
 
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-                <h3 className="font-semibold text-gray-800 mb-4">Scans (last 14 days)</h3>
+                <h3 className="font-semibold text-gray-800 mb-4">{t('Scans (last 14 days)')}</h3>
                 {(stats?.daily_trend ?? []).length > 0 ? (
                   <div className="flex items-end gap-2 h-32">
                     {stats!.daily_trend.map((t) => (
@@ -176,14 +178,14 @@ export default function DashboardPage() {
                     ))}
                   </div>
                 ) : (
-                  <p className="text-sm text-gray-400">No data yet.</p>
+                  <p className="text-sm text-gray-400">{t('No data yet.')}</p>
                 )}
               </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-                <h3 className="font-semibold text-gray-800 mb-4">Violations by Field</h3>
+                <h3 className="font-semibold text-gray-800 mb-4">{t('Violations by Field')}</h3>
                 {(Object.entries(stats?.field_violations ?? {}) as [string, { count: number; severity: string }][]).map(
                   ([field, info]) => (
                     <div key={field} className="flex items-center justify-between py-1.5 border-b border-gray-50 last:border-0">
@@ -198,12 +200,12 @@ export default function DashboardPage() {
                   ),
                 )}
                 {Object.keys(stats?.field_violations ?? {}).length === 0 && (
-                  <p className="text-sm text-gray-400">No violations recorded.</p>
+                  <p className="text-sm text-gray-400">{t('No violations recorded.')}</p>
                 )}
               </div>
 
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-                <h3 className="font-semibold text-gray-800 mb-3">Recent Inspections</h3>
+                <h3 className="font-semibold text-gray-800 mb-3">{t('Recent Inspections')}</h3>
                 <div className="space-y-2">
                   {(stats?.recent ?? []).map((r) => (
                     <Link
@@ -213,7 +215,7 @@ export default function DashboardPage() {
                     >
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-gray-800 truncate">
-                          {r.product_name || 'Unknown product'}
+                          {r.product_name || t('Unknown product')}
                         </p>
                         <p className="text-xs text-gray-500 truncate">
                           {r.id} • {new Date(r.created_at).toLocaleString()}
@@ -226,16 +228,16 @@ export default function DashboardPage() {
                         <span
                           className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${statusBg[r.status] || 'bg-gray-50'}`}
                         >
-                          {r.status.replace(/_/g, ' ')}
+                          {tStatus(r.status)}
                         </span>
                       </div>
                     </Link>
                   ))}
                   {(stats?.recent ?? []).length === 0 && (
                     <p className="text-sm text-gray-400">
-                      No inspections yet.{' '}
+                      {t('No inspections yet.')}{' '}
                       <Link href="/" className="text-blue-600 hover:underline">
-                        Start one now
+                        {t('Start one now')}
                       </Link>
                     </p>
                   )}
