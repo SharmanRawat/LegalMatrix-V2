@@ -237,6 +237,27 @@ Still to do:
   resolve at any sensible preprocessing → **ROI pass NOT adopted**; p4's
   dates stay NOT DETECTED → inspector entry, per honesty-over-accuracy. See
   MEMORY.md §3b-vi.
+- **DONE (this session, run21_clean): Corrupt single-digit-year reject +
+  golden sanity check.** Scanned every date field in the frozen pipe cache —
+  exactly one corrupt value exists (`image7_back` mfg `14.04.0`, from p7's
+  `14.04.24` label; pre-verified the primary raw read is `14.04.22`, so the
+  true year is unrecoverable by any deterministic rule). New merge-level gate
+  `_corrupt_single_digit_year` blanks a date whose trailing numeric token is
+  a single digit inside a punctuation-joined date ("unreadable, not partial")
+  — parse_date's 2-digit fallback would otherwise emit a fake `14/04/2020`.
+  Real 2/4-digit years, month-name/month-year, year-only partials
+  (`2026` — kept, they're honest partials), shelf-life (`6 MONTHS`) and
+  batch/nutrition lines all provably untouched (tested). Audit tool also now
+  warns (warn-only, never fixes) on impossible golden pairs at `--answers`
+  load: p23's `exp 28/06/26 < mfg 25/12/26` surfaces every run as a suspected
+  entry swap. Golden audit (frozen pipe cache): **175/238 unchanged, 0
+  regressions**; p7 mfg flips WRONG→NOT DETECTED (manual entry, by design).
+  Suite now **237 passed, 2 skipped**. Per Claude-consult conclusions: only
+  7's corrupt emission was deterministically fixable; the other wrongs are
+  honest partials (`2026` year-only) or noise (`05.10.2026`, `JAN/2027`) and
+  were left alone; p1 `Pkd.10/08/26` is a real printed read mis-filed into
+  mfg (golden blank) — kept, NOT a hallucination to suppress. See MEMORY.md
+  §3b-vii.
 - **DONE (this session): OCR upgrade decision CLOSED — keep bundled PP-OCRv3.**
   Both PP-OCRv4 variants were measured on the golden set and REJECTED:
   run15-v4mobile (151/238, 17 broken cells → §3b-ii) and run17-v4server on

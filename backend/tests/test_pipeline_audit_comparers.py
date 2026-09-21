@@ -12,7 +12,9 @@ from pathlib import Path
 BACKEND = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND / "scripts"))
 
-from pipeline_audit import _cmp_care, _cmp_date, _cmp_price, _cmp_quantity  # noqa: E402
+from pipeline_audit import (  # noqa: E402
+    _cmp_care, _cmp_date, _cmp_price, _cmp_quantity, _warn_impossible_golden_dates,
+)
 
 
 def test_cmp_price_currency_equivalent():
@@ -56,6 +58,25 @@ def test_cmp_date_forms_equivalent():
 def test_cmp_date_impossible_month_surfaces():
     ok, note = _cmp_date("13/2028", "03/2028")
     assert ok is False and "month" in note
+
+
+def test_golden_sanity_warns_impossible_pair():
+    """p23's golden entry (mfg 25/12/26, exp 28/06/26 — expiry before mfg) is
+    a physically impossible pair; the audit must surface it at load without
+    touching the untouchable golden file."""
+    warns = _warn_impossible_golden_dates({"23": {
+        "manufacturing_date": "25/12/26", "expiry_date": "28/06/26"}})
+    assert len(warns) == 1 and "23" in warns[0]
+
+
+def test_golden_sanity_silent_on_healthy_and_partial():
+    """Ordered pairs, year-only partials and blank cells never warn."""
+    warns = _warn_impossible_golden_dates({
+        "1": {"manufacturing_date": "10/08/26", "expiry_date": "06/02/27"},
+        "3": {"manufacturing_date": "2026", "expiry_date": "JAN 2028"},
+        "4": {"manufacturing_date": "", "expiry_date": "16/05/2027"},
+    })
+    assert warns == []
 
 def test_cmp_care_exact_equal():
     ok, note = _cmp_care("022-71230555, suggestion@dmartindia.com",

@@ -151,6 +151,30 @@ def _clean_date_pair(mfg: str, exp: str) -> tuple:
     return out_m, out_e
 
 
+def _corrupt_single_digit_year(value: str) -> bool:
+    """True when a date's trailing numeric token is a single digit.
+
+    On sub-resolution print the recognizer can collapse a 2-digit year to one
+    digit ('14.04.24' read as '14.04.0'). parse_date would 2-digit-expand that
+    into a plausible-but-fake 200x year, so the merged cell would emit a
+    corrupt full date. Those reads are unreadable, not partial — the merge
+    blanks them (NOT DETECTED) so the inspector keys the true value.
+
+    False for everything a real label legitimately holds: year-only partials
+    ('2026'), real 2-digit/4-digit years ('14.04.22', '05.10.2026'), month-
+    year and month-name dates ('08/2026', 'JAN/2027', 'MAR/27'), and shelf-
+    life strings ('6 MONTHS'). The digit must sit as the final token of a
+    punctuation-joined date ('14.04.0', never 'U280656485 8')."""
+    s = str(value or "").strip().upper()
+    if not s:
+        return False
+    m = re.search(r"(\d{1,2}\s*[.:/-]\s*\d{1,2}(?:\s*[.:/-]\s*\d{1,4})?)$", s)
+    if not m:
+        return False
+    nums = re.findall(r"\d+", m.group(1))
+    return bool(nums) and len(nums[-1]) == 1
+
+
 # A 3B SLM sometimes hands a promotion/boilerplate line back as the product
 # name ('With TULSI MADHA…', 'Suggested Carnishing', 'CONTENTS Selected
 # Washed', 'Newltem', 'Fewmmended Alowance'). The routing only lets a
@@ -468,6 +492,13 @@ def merge_extractions(results: List[Dict],
     # a healthy ordered pair (0-regression guard) and never clobbers an
     # inspector's manual override (those are applied post-merge on top).
     _reconcile_date_ordering(merged, results)
+    # A corrupt single-digit-year read ('14.04.0' -> fake 14/04/2020) is
+    # unreadable, not a partial: blank it so the field is NOT DETECTED and the
+    # inspector keys the true value. Runs after reconciliation = final word on
+    # mfg/exp; year-only, 2/4-digit-year and month-name dates never match.
+    for dk in date_keys:
+        if _corrupt_single_digit_year(merged.get(dk)):
+            merged[dk] = ""
     return merged
 
 

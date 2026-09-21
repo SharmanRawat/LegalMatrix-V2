@@ -108,6 +108,7 @@ Two layers pulled after run6; measured on the same golden set:
 | run18-mrp | **v3 + MRP-only guarded VLM rescue** (fresh, same host, GPU SLM, `VLM_RESCUE_ENABLED=1`) — **measured, NOT adopted** → see §3b-iv | 172 | 72.3% |
 | run19-dates2 | **v3 + raw-OCR two-date reconciliation gate** (`_reconcile_date_ordering`, frozen run16 pipe cache — deterministic merge change) → see §3b-v | **171** | **71.8%** |
 | run20-repair | **v3 + date-token OCR repair** (`_repair_date_token` in `_collect_token_dates`: NO/N0→NOV in `dd-mon-yyyy`, glued `JUN25AUG26`→2 short dates, 2-digit-year expansion; frozen pipe cache — deterministic merge-only diff) → see §3b-vi | **175** | **73.5%** |
+| run21-clean | **v3 + corrupt single-digit-year reject** (`_corrupt_single_digit_year` in `merge_extractions`: `14.04.0`→NOT DETECTED, no fake 200x year; + audit golden sanity warn) — frozen pipe cache, deterministic merge-only diff → see §3b-vii | **175** | **73.5%** |
 
 - **run8-gate (deterministic, KEPT):** `_SEP_DATE_RE` no longer treats a bare
   space as a date separator, bare years restricted to 19xx/20xx, and numeric
@@ -330,6 +331,42 @@ Two layers pulled after run6; measured on the same golden set:
   sub-resolution date cells (p4/p14/p16/p17/p22/p28, plus p27's mangled
   `HPR26`) stay NOT DETECTED → inspector manual entry, by design.
 
+### 3b-vii. Corrupt single-digit-year reject + golden sanity (run21_clean) — SHIPPED
+
+- **Problem:** on sub-resolution print a recognizer can collapse a 2-digit
+  year to one digit — p7's mfg `14.04.24` read as `14.04.0`. `parse_date`
+  expands that trailing `0` via the 2-digit fallback into a plausible-looking
+  fake `14/04/2020`, so the merged cell emitted a corrupt full date
+  (WRONG, "year 2000 vs 2024").
+- **Fix (`_corrupt_single_digit_year`, merge-level, OCR untouched):** a date
+  whose trailing numeric token is a single digit inside a punctuation-joined
+  date is unreadable, not partial — the merge blanks it → NOT DETECTED →
+  inspector keys the true value. Everything a real label legitimately holds is
+  untouched: year-only partials (`2026`), real 2/4-digit years (`14.04.22`,
+  `05.10.2026`), month-year / month-name (`08/2026`, `JAN/2027`, `MAR/27`),
+  shelf-life strings (`6 MONTHS`), batch/nutrition lines (`U280656485 8`,
+  `0626LC001662450 / 00` — the digit must sit in a punctuation-joined date).
+  The numeric token path in `_collect_token_dates` already requires a
+  `\d{2,4}` final group, so `14.04.0`-shaped *tokens* never qualify — the
+  corrupt value only ever enters via the per-photo *field*, which the gate
+  blanks at the single merge choke point.
+- **Measured (frozen pipe cache → deterministic merge-only diff):** first
+  scanned every date field in the cache — **exactly one** corrupt value
+  (image7_back mfg `14.04.0`). **175/238 unchanged, 0 regressions**; p7 mfg
+  flips WRONG→NOT DETECTED (CSV `missing, oracle-only`). +5 tests; full suite
+  **237 passed, 2 skipped**.
+- **Golden sanity check (audit tool, not the pipeline):** `--answers` load
+  now warns on physically impossible golden pairs (expiry before mfg) — p23's
+  `mfg 25/12/26, exp 28/06/26` is flagged as a suspected entry swap every run.
+  Warn-only: the golden file stays untouchable; the warning surfaces the
+  corruption instead of silently skewing the metric (pinned by test).
+- **p7 evidence (from the raw token stream):** the primary read is actually
+  `14.04.22` (conf 0.70) — year `24` misread as `22`, not destroyed to `0`;
+  no `24` exists anywhere in p7's stream, so `14.04.24` is unrecoverable by
+  any deterministic rule. Blanking the corrupt `14.04.0` emission is the
+  honest maximum. (This corrects the "year read as single-zero" premise: the
+  `0` was a lower-quality variant-pass read winning longest-string.)
+
 ## 4. Commands
 
 ```bash
@@ -372,6 +409,16 @@ k of one N together.
 
 ## 7. Recent shipped changes
 
+- **Corrupt single-digit-year reject + golden sanity (2026-09-22, run21)**:
+  `merge_extractions` now blanks a date whose trailing numeric token is a
+  single digit in a punctuation-joined date (`14.04.0` → NOT DETECTED) — a
+  fake 200x year from the 2-digit fallback is worse than an unreadable field;
+  real 2/4-digit years, month-name, year-only partials and shelf-life strings
+  are untouched. **Golden audit 175/238 unchanged, 0 regressions** (exactly
+  one corrupt value in the whole cache: p7 mfg; flips WRONG→NOT DETECTED).
+  The audit `--answers` load now warns on impossible golden pairs (expiry
+  before mfg — p23), warn-only, pinned by test. Suite 237 passed, 2 skipped.
+  See MEMORY.md §3b-vii.
 - **Raw-OCR two-date reconciliation gate (2026-09-22)**: `merge_extractions`
   now repairs inverted/mis-filed/missing mfg-exp pairs from clean date tokens
   read anywhere in the raw OCR streams (earlier → mfg, later → expiry), with

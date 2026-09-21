@@ -278,3 +278,43 @@ def test_number_abbreviation_never_repaired_to_nov():
     merged = merge_extractions(results, ["back"])
     assert (merged.get("manufacturing_date") or "") == "01/2026"
     assert (merged.get("expiry_date") or "") == ""
+
+
+# ── corrupt single-digit-year rejection (p7: '14.04.0' → NOT DETECTED) ───────
+
+def test_corrupt_single_digit_year_matches_only_true_corruption():
+    """p7: '14.04.24' read as '14.04.0' on sub-resolution print. Only a date
+    whose trailing numeric token is a single digit is corrupt — real 2/4-digit
+    years, month-year, month-name, year-only partials and shelf-life strings
+    must all survive untouched."""
+    from app.services.inspection_service import _corrupt_single_digit_year
+    for bad in ["14.04.0", "14.04.0 ", "05-06-7", "01/02/3", "Mfg. Date 14.04.0"]:
+        assert _corrupt_single_digit_year(bad) is True, bad
+    for good in ["14.04.22", "05.10.2026", "06.08:2026", "10 / 08 / 26",
+                 "JAN/2027", "08/2026", "12/2025", "2023", "2026", "MAR/27",
+                 "6 MONTHS", "U280656485 8", "0626LC001662450 / 00", ""]:
+        assert _corrupt_single_digit_year(good) is False, good
+
+
+def test_corrupt_single_digit_year_blanked_in_merge():
+    """p7: the per-photo field carries mfg '14.04.0' (year token destroyed).
+    Emitting a fake 200x year is worse than NOT DETECTED — the merge blanks
+    the field for manual entry, and the shelf-life expiry stays absent."""
+    results = [
+        _res({"manufacturing_date": "14.04.0", "expiry_date": "6MONTHS"},
+             tokens=["Mfg. Date :", "BEST BEFORE 6 MONTHS", "14.04.22"]),
+    ]
+    merged = merge_extractions(results, ["back"])
+    assert (merged.get("manufacturing_date") or "") == ""
+    assert (merged.get("expiry_date") or "") == ""
+
+
+def test_corrupt_digit_year_never_touches_real_dates():
+    """The corrupt-year gate must not blank anything a real label legitimately
+    carries — these values flow through the merge unchanged as today."""
+    for good in ["14.04.22", "05.10.2026", "10/08/26", "JAN/2027",
+                 "MAR/27", "2023", "2026", "12/2025"]:
+        results = [_res({"manufacturing_date": good, "expiry_date": ""},
+                        tokens=[])]
+        merged = merge_extractions(results, ["back"])
+        assert (merged.get("manufacturing_date") or "") == good, good

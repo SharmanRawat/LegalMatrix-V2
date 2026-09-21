@@ -310,6 +310,32 @@ def _cmp_date(p: str, o: str) -> tuple:
     return True, "date both-absent"
 
 
+def _warn_impossible_golden_dates(answers: dict) -> list:
+    """Golden-file sanity: a compliant label never has expiry before mfg.
+
+    p23's golden entry ('mfg 25/12/26, exp 28/06/26') is a physically
+    impossible pair — suspected data-entry swap. Warn at load (never fix: the
+    golden file is untouchable) so the corruption surfaces in every run log
+    instead of silently skewing the metric. Partial readings ('2026') are
+    skipped — only fully-ordered pairs are judged.
+    """
+    out = []
+    for pid, row in answers.items():
+        mfg = (row.get("manufacturing_date") or "").strip()
+        exp = (row.get("expiry_date") or "").strip()
+        if not mfg or not exp:
+            continue
+        my, mm = _parse_date(mfg)
+        ey, em = _parse_date(exp)
+        if my is None or ey is None:
+            continue
+        if (ey, em or 0) < (my, mm or 0):
+            out.append(
+                f"product {pid}: expiry {exp!r} is earlier than mfg {mfg!r} "
+                f"(impossible pair — suspected entry swap, verified by hand)")
+    return out
+
+
 _CARE_LABEL_PFX = re.compile(r"^(?:e[-_. ]?ma?l{1,2}|mail)[.:_-]?", re.I)
 
 
@@ -641,6 +667,8 @@ def main():
     answers_from_file = {}
     if args.answers:
         answers_from_file = json.loads(Path(args.answers).read_text())
+        for warn in _warn_impossible_golden_dates(answers_from_file):
+            print(f"  !! golden sanity: {warn}")
 
     ocr_cache = DiskCache(OCR_CACHE_PATH if not args.no_ocr_cache else Path("/tmp/nocache-ocr.json"))
     vlm_cache = DiskCache(VLM_CACHE_PATH)
