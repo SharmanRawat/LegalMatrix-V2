@@ -101,6 +101,8 @@ Two layers pulled after run6; measured on the same golden set:
 | run9 | + **classifier prompt edits** (fresh extraction) | 158 | 66.4% |
 | run10 | prompt edits **reverted**, gate kept (frozen cache) | 165 | 69.3% |
 | run13-dates | + **fuse date-completeness + bare-year upgrade** (fresh extraction) | 166 | 69.7% |
+| run14-v3fresh | **PP-OCRv3 fresh baseline on NEW host** (no caches; SLM draw differs) | 149 | 62.6% |
+| run15-v4mobile | **PP-OCRv4 mobile det+rec swap** (fresh, same new host) | 151 | 63.4% |
 
 - **run8-gate (deterministic, KEPT):** `_SEP_DATE_RE` no longer treats a bare
   space as a date separator, bare years restricted to 19xx/20xx, and numeric
@@ -187,6 +189,22 @@ Two layers pulled after run6; measured on the same golden set:
   total onnx (det 2.4 + rec 11 + cls 0.6), CPU via onnxruntime 1.30.
   **Decision open: PP-OCRv4 drop-in swap (same engine, ~2× rec model) measured
   against 166/238, or guarded VLM rescue, or both.**
+- **run15-v4mobile — MEASURED, REJECTED (17 regressions).** Fresh A/B on this
+  host: bundled PP-OCRv3 = 149/238, PP-OCRv4 *mobile* det+rec swap = 151/238
+  (net +2). Field math: mrp 15→13 (!!), expiry 13→11, product_name 12→12,
+  net_quantity 16→18, manufacturer 3→5, mfg_date 11→12, care 16→17, usp 16→16,
+  edible 18→18. 70/70 photos have v4 tokens differing from v3, so every cell
+  delta is genuinely OCR-driven (not SLM noise). Headline fix hit: p2 MRP
+  `₹ 440.00` now read by v4 (`MRP Rs. 440.00`, ok). But 4 MRP regressions:
+  p3 `599→1599`, p4 `410→400021`, p10 `47→''`, p14 `230→''` — the most
+  legally-required field went NET NEGATIVE. Also: p2 mfg `8/2020→''` (v4 reads
+  `82020` glued, breaking the run13 bare-year path), p18 expiry `''→18-07-2026`
+  (phantom read), p20 nq `100g→17.10g`, p22 name `MAGGI→Guideline Daily`,
+  p5 mfr `SAHRIDAY→SAHRIDAYFOOD`. Fixes worth noting if revisited: p9/10/26
+  mfr+name cleanup, p12 care, p15/21 usp, p26 mfg `JUN/2025`, p8/22 care emails.
+  Result: **do NOT ship v4-mobile as default**. Next candidates: (a-2) PP-OCRv4
+  **server** models (larger, usually more accurate than mobile) re-measured the
+  same way; (b) guarded VLM rescue; (c) both.
 
 ## 4. Commands
 

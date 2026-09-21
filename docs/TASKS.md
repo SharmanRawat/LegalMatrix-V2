@@ -172,12 +172,15 @@ Next sweep (this session, run8/run9/run10 — prompt + gate hardening):
 Still to do:
 - **OPEN DECISION (next session): OCR upgrade for the low-confidence tail.**
   p2's MRP ₹440.00 is on the photo and readable by qwen2.5vl:7b, not by the
-  PP-OCRv3 CPU stack (13.1 MB onnx). Options: (a) PP-OCRv4 drop-in swap
-  (same rapidocr engine, new det+rec .onnx ≈ 25 MB, one config change) then
-  re-measure all 72 against golden — ship only if ≥166/238 with 0 regressions,
-  revert otherwise; (b) guarded VLM rescue (VLM_RESCUE_ENABLED=1 shows p2 →
+  PP-OCRv3 CPU stack (13.1 MB onnx). Options: (a-2) **PP-OCRv4 SERVER** models
+  re-measured like run15 — the MOBILE v4 swap was measured on this host and
+  REJECTED (run15-v4mobile: 151/238 vs v3 149/238, but mrp 15→13 with 4 MRP
+  regressions + 17 total broken cells → fails the 0-regression bar; full notes
+  in MEMORY §3b-ii/iv); (b) guarded VLM rescue (VLM_RESCUE_ENABLED=1 shows p2 →
   COMPLIANT 7/7 but mis-files expiry 08/2020 mfr/care blobs — needs the
   date/contact mis-file guard first); (c) both. Do NOT ship naive rescue.
+  Baseline to beat on this host: fresh PP-OCRv3 = 149/238 (run14-v3fresh);
+  ship only if ≥ that with 0 regressions, else revert.
 - Optional later: prompt-level label hint to the SLM ("this is the BACK label") — not
   needed for routing correctness, only for per-photo extraction focus.
 - Diagnose the user's 4-image upload that returned poor results (product + output
