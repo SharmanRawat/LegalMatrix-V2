@@ -102,7 +102,9 @@ Two layers pulled after run6; measured on the same golden set:
 | run10 | prompt edits **reverted**, gate kept (frozen cache) | 165 | 69.3% |
 | run13-dates | + **fuse date-completeness + bare-year upgrade** (fresh extraction) | 166 | 69.7% |
 | run14-v3fresh | **PP-OCRv3 fresh baseline on NEW host** (no caches; SLM draw differs) | 149 | 62.6% |
-| run15-v4mobile | **PP-OCRv4 mobile det+rec swap** (fresh, same new host) | 151 | 63.4% |
+| run15-v4mobile | **PP-OCRv4 mobile det+rec swap** (fresh, same new host, GPU SLM) | 151 | 63.4% |
+| run16-v3gpu | **PP-OCRv3 CPU + GPU-SLM fresh baseline** (GPU shifts 3B draws → not comparable to run14) | 166 | 69.7% |
+| run17-v4srv | **PP-OCRv4 SERVER det+rec swap on GPU** (fresh, same host, GPU SLM) | 169 | 71.0% |
 
 - **run8-gate (deterministic, KEPT):** `_SEP_DATE_RE` no longer treats a bare
   space as a date separator, bare years restricted to 19xx/20xx, and numeric
@@ -205,6 +207,21 @@ Two layers pulled after run6; measured on the same golden set:
   Result: **do NOT ship v4-mobile as default**. Next candidates: (a-2) PP-OCRv4
   **server** models (larger, usually more accurate than mobile) re-measured the
   same way; (b) guarded VLM rescue; (c) both.
+- **run16/run17 — v4 server measured on GPU, REJECTED (22 regressions).**
+  On this host the 3B SLM runs on the RTX 5060 and GPU shifts its draws, so
+  every GPU-era run needs its own baseline: run16 = bundled PP-OCRv3 CPU + GPU
+  SLM = **166/238**; run17 = PP-OCRv4 **server** det+rec (GPU, ORT CUDA12 +
+  cuDNN 9.26) + GPU SLM = **169/238** (net +3). True fixes 25 vs true
+  regressions 22 → fails the **0-regression** bar → **REJECTED, scaffolding
+  reverted (tree byte-identical to committed v3)**. Headline regressions: p3
+  MRP `599.00→92.40`, p4 MRP `410→''`, p29 MRP `85.00→''`, p2 mfg
+  `8/2020→''` — the server weights show the SAME date-glue failure as v4
+  mobile (`8X2020`), so the bare-year upgrade path (run13) breaks on v4 too.
+  Also: server convs on this GPU hit ORT "Fallback mode" (~53k warnings;
+  products 7 & 14 took 14.5/12 min vs ~30s normally) — slower AND not more
+  accurate on this stack. **CLOSED: keep bundled PP-OCRv3 as the shipped OCR
+  (deterministic 166/238 baseline). Remaining open lever = guarded VLM rescue
+  (option b), needs the date/contact mis-file guard first.**
 
 ## 4. Commands
 

@@ -170,17 +170,18 @@ Next sweep (this session, run8/run9/run10 — prompt + gate hardening):
   205 passed, 2 skipped.
 
 Still to do:
-- **OPEN DECISION (next session): OCR upgrade for the low-confidence tail.**
-  p2's MRP ₹440.00 is on the photo and readable by qwen2.5vl:7b, not by the
-  PP-OCRv3 CPU stack (13.1 MB onnx). Options: (a-2) **PP-OCRv4 SERVER** models
-  re-measured like run15 — the MOBILE v4 swap was measured on this host and
-  REJECTED (run15-v4mobile: 151/238 vs v3 149/238, but mrp 15→13 with 4 MRP
-  regressions + 17 total broken cells → fails the 0-regression bar; full notes
-  in MEMORY §3b-ii/iv); (b) guarded VLM rescue (VLM_RESCUE_ENABLED=1 shows p2 →
-  COMPLIANT 7/7 but mis-files expiry 08/2020 mfr/care blobs — needs the
-  date/contact mis-file guard first); (c) both. Do NOT ship naive rescue.
-  Baseline to beat on this host: fresh PP-OCRv3 = 149/238 (run14-v3fresh);
-  ship only if ≥ that with 0 regressions, else revert.
+- **DONE (this session): OCR upgrade decision CLOSED — keep bundled PP-OCRv3.**
+  Both PP-OCRv4 variants were measured on the golden set and REJECTED:
+  run15-v4mobile (151/238, 17 broken cells → §3b-ii) and run17-v4server on
+  GPU (169/238 vs run16 v3 baseline 166/238, but 22 true regressions → fails
+  the 0-regression bar; server also hits ORT fallback-mode on this GPU and
+  shows the same date-glue failure `8X2020` breaking p2 mfg). v4 scaffolding
+  reverted; tree byte-identical to committed v3. Baseline to beat if ever
+  revisited: **166/238 (run16: v3+GPU SLM)**; GPU-era runs need their own
+  baseline (GPU shifts 3B draws). Remaining open lever: (b) **guarded VLM
+  rescue** (VLM_RESCUE_ENABLED=1 shows p2 → COMPLIANT 7/7 but mis-files expiry
+  08/2020 mfr/care blobs — needs the date/contact mis-file guard first). Do
+  NOT ship naive rescue.
 - Optional later: prompt-level label hint to the SLM ("this is the BACK label") — not
   needed for routing correctness, only for per-photo extraction focus.
 - Diagnose the user's 4-image upload that returned poor results (product + output
