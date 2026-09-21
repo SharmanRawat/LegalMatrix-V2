@@ -1,11 +1,15 @@
+import hashlib
 import io
 import json
+import re
 import tempfile
 from datetime import datetime
+from pathlib import Path
 from typing import List, Dict, Optional
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
 from fastapi.responses import JSONResponse, StreamingResponse, Response, FileResponse
+from PIL import Image
 
 from app.config import get_evidence_dir
 from app.repositories import inspections as inspection_repo
@@ -266,142 +270,197 @@ async def export_inspection(
 
 # ── PDF generation ─────────────────────────────────────────────────────────
 
+FONT_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+_DEVA_FONT = FONT_DIR / "Hind-Regular.ttf"
+_DEVA_FONT_BOLD = FONT_DIR / "Hind-Bold.ttf"
+_DEVA_RE = re.compile(r"[\u0900-\u097f]")
+
+
 def _sanitize(text: str) -> str:
+    """Normalize text for PDF rendering; keep Unicode (font routing handles scripts)."""
     if not text:
         return ""
-    return (text
+    return (str(text)
         .replace('\u20b9', 'Rs.')
         .replace('\u2018', "'").replace('\u2019', "'")
         .replace('\u201c', '"').replace('\u201d', '"')
         .replace('\u2013', '-').replace('\u2014', '-')
         .replace('\u00b1', '+/-')
-        .encode('latin-1', errors='replace')
-        .decode('latin-1'))
+        .replace('\ufffd', '?')
+        .replace('\r', ' ').replace('\n', ' '))
+
+
+def _font_for(text) -> str:
+    return "Deva" if text and _DEVA_RE.search(str(text)) else "Helvetica"
+
+
+def _set_font(pdf, text, style, size, family=None):
+    pdf.set_font(family or _font_for(text), style, size)
+
+
+def _sha8(path) -> str:
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()[:10]
+    except OSError:
+        return "n/a"
+
+
+class _ReportPDF(FPDF):
+    """A4 legal-metrology report with a page-number footer."""
+
+    def footer(self):
+        self.set_y(-14)
+        self.set_draw_color(200, 200, 200)
+        self.line(self.l_margin, self.get_y(), self.w - self.r_margin, self.get_y())
+        self.set_font("Helvetica", "", 6.5)
+        self.set_text_color(150, 150, 150)
+        self.cell(0, 4,
+                  "LegalMatrix  |  AI-generated compliance report  |  Page "
+                  + str(self.page_no()) + " of {nb}",
+                  new_x="LMARGIN", new_y="NEXT", align="C")
+
+
+def _section(pdf, title, color=(37, 99, 235)):
+    pdf.ln(2.2)
+    pdf.set_font("Helvetica", "B", 10.5)
+    pdf.set_text_color(20, 20, 20)
+    pdf.cell(0, 6, title, new_x="LMARGIN", new_y="NEXT")
+    pdf.set_draw_color(*color)
+    pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
+    pdf.ln(1.6)
+
+
+def _meta_cell(pdf, label, value, w) -> float:
+    """Two-line meta cell (label over value). Returns the cell bottom y."""
+    x0, y0 = pdf.get_x(), pdf.get_y()
+    pdf.set_font("Helvetica", "B", 6.5)
+    pdf.set_text_color(140, 140, 140)
+    pdf.set_xy(x0, y0)
+    pdf.cell(w, 2.4, label, new_x="LMARGIN", new_y="NEXT")
+    pdf.set_text_color(0, 0, 0)
+    _set_font(pdf, value, "", 8.5)
+    pdf.set_xy(x0, y0 + 2.4)
+    pdf.multi_cell(w - 1, 3.3, _sanitize(value), new_x="RIGHT", new_y="NEXT")
+    return pdf.get_y()
+
+
+def _stat_box(pdf, w, title, value, fill):
+    x0, y0 = pdf.get_x(), pdf.get_y()
+    pdf.set_fill_color(*fill)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 8.5)
+    pdf.set_xy(x0, y0)
+    pdf.multi_cell(w, 3.6, f"{title}\n{value}", border=1, align="C", fill=True,
+                   new_x="LMARGIN", new_y="TOP")
+    pdf.set_xy(x0 + w, y0)
+
+
+def _table_row(pdf, cells, widths, row_fill=(255, 255, 255), cell_fills=None):
+    """cells: (text, style, size, color) per column; cell_fills: per-col RGB or None."""
+    x0, y0 = pdf.get_x(), pdf.get_y()
+    max_h = 5.0
+    for i, (txt, style, size, color) in enumerate(cells):
+        pdf.set_xy(x0 + sum(widths[:i]), y0)
+        _set_font(pdf, txt, style, size)
+        pdf.set_text_color(*color)
+        fill = row_fill
+        if cell_fills and i < len(cell_fills) and cell_fills[i]:
+            fill = cell_fills[i]
+        pdf.set_fill_color(*fill)
+        pdf.multi_cell(widths[i], 3.9, txt, border=1, align="L", fill=True,
+                       new_x="LMARGIN", new_y="NEXT")
+        bottom = pdf.get_y()
+        if bottom - y0 > max_h:
+            max_h = bottom - y0
+    pdf.set_y(y0 + max_h)
+    pdf.set_x(pdf.l_margin)
 
 
 def _build_pdf(result: Dict) -> bytes:
-    pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=20)
+    from app.config import OCR_ENGINE, FIELD_CLASSIFIER_MODEL, OCR_LANG
+
+    pdf = _ReportPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=18)
+    pdf.set_margins(12, 12, 12)
+    if _DEVA_FONT.exists():
+        pdf.add_font("Deva", "", str(_DEVA_FONT))
+        pdf.add_font("Deva", "B", str(_DEVA_FONT_BOLD) if _DEVA_FONT_BOLD.exists() else str(_DEVA_FONT))
     pdf.add_page()
+    pdf.alias_nb_pages()
 
-    pdf.set_font("Helvetica", "B", 22)
+    usable = pdf.w - pdf.l_margin - pdf.r_margin
+    status = result["status"]
+    status_colors = {
+        "COMPLIANT": (22, 163, 74),
+        "REVIEW_REQUIRED": (234, 179, 8),
+        "POTENTIAL_VIOLATION": (220, 38, 38),
+    }
+    sc = status_colors.get(status, (100, 100, 100))
+    evidence = result.get("evidence", {})
+    meta = result.get("meta") or {}
+
+    # ── Header ──
+    pdf.set_font("Helvetica", "B", 20)
     pdf.set_text_color(37, 99, 235)
-    pdf.cell(0, 12, "LegalMatrix", new_x="LMARGIN", new_y="NEXT", align="C")
-
-    pdf.set_font("Helvetica", "", 10)
-    pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 6, "AI-Powered Legal Metrology Compliance Report", new_x="LMARGIN", new_y="NEXT", align="C")
-    pdf.ln(6)
-
-    # Inspection info
-    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 10, "LegalMatrix", new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(110, 110, 110)
+    pdf.cell(0, 5, "AI-Powered Legal Metrology Compliance Report",
+             new_x="LMARGIN", new_y="NEXT", align="C")
+    chip_w = pdf.get_string_width(status) + 12
+    pdf.set_fill_color(*sc)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_x((pdf.w - chip_w) / 2)
+    pdf.cell(chip_w, 6, f"  {status}  ", new_x="LMARGIN", new_y="NEXT", align="C", fill=True)
     pdf.set_text_color(0, 0, 0)
-    pdf.cell(0, 7, "Inspection Details", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_draw_color(37, 99, 235)
-    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
     pdf.ln(3)
 
-    status = result["status"]
-    compliance = result
-    evidence = result.get("evidence", {})
-    info = [
-        ("Inspection ID", result["inspection_id"]),
-        ("Date & Time", result["timestamp"]),
-        ("Images Processed", str(result["images_processed"])),
-        ("Model", result.get("method", "")),
-        ("Evidence SHA-256", (evidence.get("hash") or "")[:40] + "..." if evidence.get("hash") else "N/A"),
+    # ── Inspection meta (2-col grid) ──
+    ts = result.get("timestamp", "")
+    try:
+        ts_disp = datetime.fromisoformat(ts).strftime("%d %b %Y, %I:%M %p")
+    except (TypeError, ValueError):
+        ts_disp = str(ts)
+    engine = meta.get("ocr_engine") or OCR_ENGINE
+    classifier = meta.get("classifier") or FIELD_CLASSIFIER_MODEL
+    half = usable / 2
+    meta_rows = [
+        ("Inspection ID", str(result.get("inspection_id", "-")), "Date & Time", ts_disp),
+        ("Images Processed", str(result.get("images_processed", "-")), "Method", str(result.get("method", "-"))),
+        ("OCR Engine", f"{engine} (lang {OCR_LANG})", "Classifier", str(classifier)),
+        ("Evidence SHA-256", (evidence.get("hash", "n/a") or "n/a")[:20], "Grade", str(result.get("grade", "-"))),
     ]
-    for label, value in info:
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.cell(40, 6, label + ":", new_x="RIGHT", new_y="LAST")
-        pdf.set_font("Helvetica", "", 9)
-        pdf.cell(0, 6, _sanitize(value), new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(4)
+    for k1, v1, k2, v2 in meta_rows:
+        y0 = pdf.get_y()
+        pdf.set_x(pdf.l_margin)
+        b1 = _meta_cell(pdf, k1, v1, half)
+        pdf.set_xy(pdf.l_margin + half, y0)
+        b2 = _meta_cell(pdf, k2, v2, half)
+        pdf.set_xy(pdf.l_margin, max(b1, b2) + 0.9)
 
+    # ── Compliance strip ──
     score = result.get("compliance_score", 0)
     passed = result.get("passed_count", 0)
     total = result.get("total_rules", 0)
-
-    pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(0, 7, "Compliance Summary", new_x="LMARGIN", new_y="NEXT")
-    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-    pdf.ln(3)
-
-    if score >= 80:
-        pdf.set_text_color(22, 163, 74)
-    elif score >= 50:
-        pdf.set_text_color(234, 179, 8)
-    else:
-        pdf.set_text_color(220, 38, 38)
-
-    pdf.set_font("Helvetica", "B", 16)
-    pdf.cell(0, 10, f"Compliance Score: {score}%", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_text_color(0, 0, 0)
-
-    pdf.set_font("Helvetica", "", 9)
-    pdf.cell(0, 6, f"Status: {status}  |  Rules Passed: {passed}/{total}", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(4)
-
-    status_colors = {"COMPLIANT": (22, 163, 74), "REVIEW_REQUIRED": (234, 179, 8), "POTENTIAL_VIOLATION": (220, 38, 38)}
-    sc = status_colors.get(status, (100, 100, 100))
-    pdf.set_fill_color(*sc)
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(60, 8, f"  {status}", new_x="LMARGIN", new_y="NEXT", fill=True)
-    pdf.set_text_color(0, 0, 0)
-    pdf.ln(4)
-
-    # Extraction confidence (resource-adaptive cascade auditability)
     conf = result.get("extraction_confidence") or {}
-    if conf.get("overall") is not None:
-        pdf.set_font("Helvetica", "B", 11)
-        pdf.cell(0, 7, "Extraction Confidence", new_x="LMARGIN", new_y="NEXT")
-        pdf.set_draw_color(37, 99, 235)
-        pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-        pdf.ln(3)
-        overall = float(conf["overall"])
-        corr = (22, 163, 74) if overall >= 70 else ((234, 179, 8) if overall >= 40 else (220, 38, 38))
-        pdf.set_font("Helvetica", "B", 13)
-        pdf.set_text_color(*corr)
-        pdf.cell(0, 8, f"{overall:.0f}%", new_x="LMARGIN", new_y="NEXT")
-        pdf.set_text_color(0, 0, 0)
-        pdf.set_font("Helvetica", "", 8)
-        pdf.set_text_color(70, 70, 70)
-        pdf.cell(0, 5,
-                 f"Fields present: {conf.get('fields_present', '—')} / "
-                 f"{conf.get('fields_required', '—')}  |  "
-                 f"Coverage ratio: {conf.get('coverage_ratio', '—')}",
-                 new_x="LMARGIN", new_y="NEXT")
-        pdf.set_text_color(0, 0, 0)
-        pdf.ln(3)
+    overall_conf = conf.get("overall")
+    box = usable / 3
+    _stat_box(pdf, box, "COMPLIANCE SCORE", f"{score}%", sc)
+    _stat_box(pdf, box, "RULES PASSED", f"{passed}/{total}", (37, 99, 235))
+    _stat_box(pdf, box, "EXTRACTION CONFIDENCE",
+              f"{overall_conf}%" if overall_conf is not None else "n/a", (100, 116, 139))
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_xy(pdf.l_margin, pdf.get_y() + 8.6)
+    pdf.ln(1.5)
 
-    # Evidence images
-    images = evidence.get("images", [])
-    if images:
-        pdf.set_font("Helvetica", "B", 11)
-        pdf.cell(0, 7, "Photographs / Evidence", new_x="LMARGIN", new_y="NEXT")
-        pdf.set_draw_color(200, 200, 200)
-        pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-        pdf.ln(3)
-        for item in images:
-            img_path = get_evidence_dir() / item["filename"]
-            if img_path.exists():
-                pdf.set_font("Helvetica", "I", 8)
-                pdf.set_text_color(90, 90, 90)
-                pdf.cell(0, 5, _sanitize(item["original_name"]), new_x="LMARGIN", new_y="NEXT")
-                pdf.set_text_color(0, 0, 0)
-                avail_w = pdf.w - pdf.l_margin - pdf.r_margin
-                pdf.image(str(img_path), x=None, y=None, w=min(avail_w, 90))
-                pdf.ln(2)
-        pdf.ln(2)
-
-    # Extracted Declarations
-    pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(0, 7, "Extracted Declarations", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_draw_color(37, 99, 235)
-    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-    pdf.ln(3)
-
+    # ── Declarations table ──
+    _section(pdf, "Extracted Declarations & Evidence")
+    pdf.set_draw_color(170, 185, 200)
     field_labels = {
         "mrp": "MRP", "usp": "Unit Sale Price", "net_quantity": "Net Quantity",
         "product_name": "Product Name", "manufacturer": "Manufacturer",
@@ -410,108 +469,170 @@ def _build_pdf(result: Dict) -> bytes:
     }
     declarations = result.get("declarations", {})
     field_evidence = result.get("field_evidence", {})
-    for key, label in field_labels.items():
-        val = declarations.get(key, "")
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.cell(40, 6, _sanitize(label) + ":", new_x="RIGHT", new_y="LAST")
-        if val:
-            pdf.set_font("Helvetica", "", 9)
-            pdf.set_text_color(22, 163, 74)
-            pdf.cell(0, 6, _sanitize(val), new_x="LMARGIN", new_y="NEXT")
-            ev = field_evidence.get(key, {})
-            src = ev.get("source", "")
-            txt = ev.get("text", "")
-            if src or txt:
-                pdf.set_text_color(120, 120, 120)
-                pdf.set_font("Helvetica", "I", 7)
-                src_label = f"[via {src}] " if src else ""
-                pdf.cell(40, 4, "", new_x="RIGHT", new_y="LAST")
-                pdf.multi_cell(0, 4, f'{src_label}"{_sanitize(txt)}"',
-                               new_x="LMARGIN", new_y="NEXT")
+    overrides = meta.get("manual_overrides") or {}
+    widths = [30, 58, 72, 26]
+    status_chip = {
+        "OK": (22, 163, 74), "OVERRIDDEN": (217, 119, 6), "NOT DETECTED": (185, 28, 28),
+    }
+    _table_row(
+        pdf,
+        [("Field", "B", 7, (255, 255, 255)), ("Declared Value", "B", 7, (255, 255, 255)),
+         ("Evidence (source: text)", "B", 7, (255, 255, 255)), ("Status", "B", 7, (255, 255, 255))],
+        widths,
+        row_fill=(37, 99, 235),
+    )
+    for i, (key, label) in enumerate(field_labels.items()):
+        val = _sanitize(declarations.get(key, ""))
+        ev = field_evidence.get(key) or {}
+        ev_text = _sanitize(ev.get("text", ""))
+        ev_src = ev.get("source", "")
+        ev_disp = (f"{ev_src}: {ev_text}" if ev_src and ev_text else (ev_src or ev_text))[:60]
+        if key in overrides:
+            st, status_name = status_chip["OVERRIDDEN"], "OVERRIDDEN"
+            val_disp = _sanitize(overrides[key].get("corrected", val))
+        elif not val and not ev_disp:
+            st, status_name = status_chip["NOT DETECTED"], "NOT DETECTED"
+            val_disp = "-"
         else:
-            pdf.set_font("Helvetica", "I", 9)
-            pdf.set_text_color(220, 38, 38)
-            pdf.cell(0, 6, "NOT DETECTED", new_x="LMARGIN", new_y="NEXT")
-        pdf.set_text_color(0, 0, 0)
-    pdf.ln(4)
-
-    # Font measurement
-    fm = result.get("font_measurement")
-    if fm:
-        pdf.set_font("Helvetica", "B", 11)
-        pdf.cell(0, 7, "Font Size & Readability", new_x="LMARGIN", new_y="NEXT")
-        pdf.set_draw_color(37, 99, 235)
-        pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-        pdf.ln(3)
-        fm_status = fm.get("status", "N/A")
-        fm_color = {
-            "COMPLIANT": (22, 163, 74), "POTENTIAL_VIOLATION": (220, 38, 38),
-            "REVIEW_REQUIRED": (234, 179, 8),
-        }.get(fm_status, (100, 100, 100))
-        pdf.set_font("Helvetica", "", 9)
-        pdf.cell(0, 6,
-                 f"Measured: {fm.get('measured_mm')} mm   Required: "
-                 f"{fm.get('required_mm') if fm.get('required_mm') is not None else 'n/a'} mm   "
-                 f"Uncertainty: +/-{fm.get('uncertainty')} mm",
+            st, status_name = status_chip["OK"], "OK"
+            val_disp = val or ev_disp
+        _table_row(
+            pdf,
+            [
+                (label, "B", 7.5, (30, 30, 30)),
+                (val_disp, "", 7.5, (20, 20, 20)),
+                (ev_disp, "", 7, (120, 120, 120)),
+                (status_name, "B", 7, (255, 255, 255)),
+            ],
+            widths,
+            row_fill=(243, 247, 255) if i % 2 else (255, 255, 255),
+            cell_fills=[None, None, None, st],
+        )
+    pdf.set_draw_color(37, 99, 235)
+    fields_present = conf.get("fields_present")
+    fields_required = conf.get("fields_required")
+    coverage = conf.get("coverage_ratio")
+    if fields_present is not None:
+        pct = f" ({coverage * 100:.0f}%)" if coverage is not None else ""
+        pdf.set_font("Helvetica", "I", 7.5)
+        pdf.set_text_color(120, 120, 120)
+        pdf.cell(0, 4, f"Extraction coverage: {fields_present}/{fields_required} key fields{pct}",
                  new_x="LMARGIN", new_y="NEXT")
-        pdf.set_text_color(*fm_color)
-        pdf.set_font("Helvetica", "B", 10)
-        pdf.cell(0, 6, f"Font Status: {fm_status}", new_x="LMARGIN", new_y="NEXT")
-        pdf.set_text_color(0, 0, 0)
-        pdf.ln(4)
+        pdf.ln(0.5)
 
-    # Violations
+    # ── Manual overrides audit trail ──
+    if overrides:
+        _section(pdf, "Manual Overrides (audit trail)", (217, 119, 6))
+        for key, ov in overrides.items():
+            ov = ov or {}
+            label = field_labels.get(key, key)
+            pdf.set_font("Helvetica", "B", 8)
+            pdf.set_text_color(0, 0, 0)
+            pdf.cell(0, 5, f"{label}:  {_sanitize(ov.get('corrected', ''))}",
+                     new_x="LMARGIN", new_y="NEXT")
+            pdf.set_font("Helvetica", "", 7)
+            pdf.set_text_color(120, 120, 120)
+            who = ov.get("by_user_id", "-")
+            at = str(ov.get("at", "-"))[:19]
+            prev = _sanitize(ov.get("original", "")) or "-"
+            pdf.cell(0, 4, f"Original AI value: {prev}   |   Corrected by user id {who} on {at}",
+                     new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(0.5)
+
+    # ── Font measurement ──
+    fm = result.get("font_measurement") or {}
+    fm_status = fm.get("status")
+    if fm_status:
+        _section(pdf, "Font Measurement (Rule 4(1))")
+        meas = fm.get("measured_mm")
+        req = fm.get("required_mm")
+        unc = fm.get("uncertainty")
+        line = (f"Measured: {meas if meas is not None else 'n/a'} mm   |   "
+                f"Required: {req if req is not None else 'n/a'} mm   |   "
+                f"Uncertainty: +/-{unc if unc is not None else 'n/a'} mm")
+        _set_font(pdf, line, "", 8.5)
+        pdf.set_text_color(60, 60, 60)
+        pdf.cell(0, 5, line, new_x="LMARGIN", new_y="NEXT")
+        fm_color = {"COMPLIANT": (22, 163, 74), "REVIEW_REQUIRED": (234, 179, 8),
+                    "CANNOT_MEASURE": (100, 100, 100), "POTENTIAL_VIOLATION": (220, 38, 38)}
+        pdf.set_text_color(*fm_color.get(fm_status, (100, 100, 100)))
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(0, 5, f"Font Status: {fm_status}", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_text_color(0, 0, 0)
+
+    # ── Violations / rules ──
     violations = result.get("violations", [])
     if violations:
-        pdf.set_font("Helvetica", "B", 11)
-        pdf.cell(0, 7, f"Rule Violations ({len(violations)})", new_x="LMARGIN", new_y="NEXT")
-        pdf.set_draw_color(220, 38, 38)
-        pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-        pdf.ln(3)
+        _section(pdf, f"Rule Violations ({len(violations)})", (220, 38, 38))
+        sev_color = {"CRITICAL": (185, 28, 28), "HIGH": (234, 88, 12),
+                     "MEDIUM": (217, 119, 6), "LOW": (100, 100, 100)}
         for v in violations:
             sev = v.get("severity", "HIGH")
-            sev_color = {"CRITICAL": (220, 38, 38), "HIGH": (234, 88, 12), "MEDIUM": (234, 179, 8), "LOW": (100, 100, 100)}
-            rgb = sev_color.get(sev, (100, 100, 100))
-            pdf.set_fill_color(*rgb)
+            rule_label = f"{v.get('rule_no', 'N/A')} - {v.get('rule_id', '').replace('_', ' ').title()}"
+            pdf.set_fill_color(*sev_color.get(sev, (100, 100, 100)))
             pdf.set_text_color(255, 255, 255)
-            pdf.set_font("Helvetica", "B", 8)
+            pdf.set_font("Helvetica", "B", 7)
             pdf.cell(18, 5, f" {sev}", new_x="RIGHT", new_y="LAST", fill=True)
             pdf.set_text_color(0, 0, 0)
-            pdf.set_font("Helvetica", "B", 9)
-            rule_label = _sanitize(f"{v.get('rule_no', 'N/A')} - {v.get('rule_id', '').replace('_', ' ').title()}")
-            pdf.cell(0, 5, f"  {rule_label}", new_x="LMARGIN", new_y="NEXT")
-            pdf.set_font("Helvetica", "", 8)
-            pdf.set_text_color(60, 60, 60)
+            extracted = _sanitize(v.get("extracted_value", ""))
+            suffix = f"  |  Found: {extracted[:40]}" if extracted else ""
+            pdf.set_font("Helvetica", "B", 8.5)
+            pdf.cell(0, 5, f"  {rule_label}{suffix}", new_x="LMARGIN", new_y="NEXT")
             desc = _sanitize(v.get("description", ""))
             if desc:
-                pdf.multi_cell(0, 4, f"  {desc}", new_x="LMARGIN", new_y="NEXT")
-            if v.get("extracted_value"):
-                pdf.set_font("Helvetica", "I", 8)
-                pdf.cell(0, 4, f"  Extracted: {_sanitize(v['extracted_value'])}", new_x="LMARGIN", new_y="NEXT")
-            rem = _sanitize(v.get("remediation", ""))
-            if rem:
-                pdf.set_font("Helvetica", "I", 8)
-                pdf.set_text_color(37, 99, 235)
-                pdf.multi_cell(0, 4, f"  Fix: {rem}", new_x="LMARGIN", new_y="NEXT")
-            pdf.set_text_color(0, 0, 0)
-            pdf.ln(2)
+                _set_font(pdf, desc, "", 7.5)
+                pdf.set_text_color(90, 90, 90)
+                pdf.set_x(pdf.l_margin + 3)
+                pdf.multi_cell(0, 3.6, desc, new_x="LMARGIN", new_y="NEXT")
+                pdf.set_text_color(0, 0, 0)
+            pdf.ln(1)
     else:
-        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_font("Helvetica", "B", 9)
         pdf.set_text_color(22, 163, 74)
-        pdf.cell(0, 7, "No Rule Violations - All Declarations Compliant", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
+        pdf.cell(0, 5, "No rule violations - all checked declarations are compliant.",
+                 new_x="LMARGIN", new_y="NEXT")
         pdf.set_text_color(0, 0, 0)
 
-    pdf.ln(6)
-    pdf.set_draw_color(200, 200, 200)
-    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-    pdf.ln(3)
-    pdf.set_font("Helvetica", "I", 7)
-    pdf.set_text_color(150, 150, 150)
-    pdf.multi_cell(0, 4,
-        "This report is AI-generated by LegalMatrix for informational purposes only. "
-        "Legal Metrology (Packaged Commodities) Rules, 2011 with amendments through 2026. "
-        "Generated: " + datetime.now().strftime("%d %B %Y, %I:%M %p"),
-        new_x="LMARGIN", new_y="NEXT", align="C",
-    )
+    # ── Evidence photos (2-up) ──
+    images = evidence.get("images", [])
+    if images:
+        _section(pdf, "Product Photographs / Evidence")
+        img_w = 88.0
+        gap = 4.0
+        for idx in range(0, len(images), 2):
+            pair = images[idx:idx + 2]
+            dims = []
+            for item in pair:
+                p = get_evidence_dir() / item["filename"]
+                hgt = img_w
+                if p.exists():
+                    try:
+                        with Image.open(p) as im:
+                            iw, ih = im.size
+                            if iw:
+                                hgt = img_w * ih / iw
+                    except Exception:
+                        pass
+                dims.append(hgt)
+            row_h = max(dims) if dims else img_w
+            y0 = pdf.get_y()
+            if y0 + row_h + 4 > pdf.h - 18:
+                pdf.add_page()
+                y0 = pdf.get_y()
+            x = pdf.l_margin
+            for item, hgt in zip(pair, dims):
+                img_path = get_evidence_dir() / item["filename"]
+                if img_path.exists():
+                    pdf.image(str(img_path), x=x, y=y0, w=img_w, h=hgt)
+                pdf.set_font("Helvetica", "I", 7)
+                pdf.set_text_color(110, 110, 110)
+                pdf.set_xy(x, y0 + hgt + 0.6)
+                name = _sanitize(item.get("original_name", ""))[:38]
+                hash_txt = _sha8(img_path) if img_path.exists() else "missing"
+                pdf.cell(img_w, 3, f"{name}  [{hash_txt}]", new_x="LMARGIN", new_y="NEXT")
+                pdf.set_text_color(0, 0, 0)
+                x += img_w + gap
+            pdf.set_y(y0 + row_h + 5)
 
     return pdf.output()

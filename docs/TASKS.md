@@ -36,6 +36,17 @@
       USP unit, `inspection_service._verify_mrp_currency`.
 - [x] Cleaned dead experiments (`training/`, `update1/`, `update2*.zip`, florence/qwen
       scratch tests) — deleted in this commit. `images/` stays local-only (gitignored).
+- [x] PDF report redesigned (this session, `inspections.py::_build_pdf`): 4 pages for
+      2 images → **2 pages**, with *more* detail: status-chip header, meta grid
+      (inspection id, date, method, OCR engine + lang, classifier, evidence SHA-256,
+      grade), compliance strip (score / rules passed / extraction confidence),
+      declarations **table** with OK / NOT DETECTED / OVERRIDDEN chips + per-field
+      evidence snippets + extraction coverage, manual-override **audit trail**,
+      font-measurement line, rule-violations with severity chips + extracted values,
+      2-up photos with per-image SHA-256 hashes, page-number footer. Bundled **Hind**
+      (Latin+Devanagari, OFL) so Hindi field values render correctly in the PDF
+      (`backend/app/assets/fonts/` + `_font_for` script routing; `_sanitize` no longer
+      latin-1-mangles non-Latin). PDF e2e test green; full suite 205 passed, 2 skipped.
 
 ## 2. Active ML loop (owner: ML pipeline, do NOT parallelise internally)
 
@@ -203,7 +214,7 @@ Still to do:
 | # | Stream | Files | First commit-sized task |
 |---|---|---|---|
 | A | Frontend polish | `frontend/app/page.tsx`, `inspection/[id]/`, `dashboard/`, `history/`, `components/RadarChart.tsx`, `lib/api.ts` | Empty/loading/error states; mobile camera CSS; dashboard charts wired to real `/dashboard/stats`; search filters wired to `/search` |
-| B | Report/export UX | `backend/app/api/inspections.py::_build_pdf`, `services/certificate_generator.py`, frontend download buttons | Logo + header, QR to verify URL, Hindi font note (₹→Rs. is intentional in PDF), CSV column freeze |
+| B | Report/export UX | `backend/app/api/inspections.py::_build_pdf`, `services/certificate_generator.py`, frontend download buttons | Logo + header, QR to verify URL, certificate generator polish, CSV column freeze. (`_build_pdf` core redesign DONE — see §1.) |
 | C | Auth + roles UX | `api/auth.py`, `login/`, `lib/api.ts` | Hide override buttons for VIEWER, redirect on 401, change-password screen, document seed creds rotation |
 | D | Evidence integrity | `services/inspection_service._store_evidence`, evidence endpoints | Verify-hash display, tamper demo, storage-quota note |
 | E | DevOps/docs | `docker-compose.yml`, Dockerfiles, `docs/` | `docker compose up --build` green on a clean machine; record GPU/CPU timings in MEMORY.md |
@@ -216,7 +227,8 @@ or any token (see MEMORY.md security note).
 ## 4. Backlog (after extraction is green)
 
 - [ ] E-commerce listing URL input (needs new extractor, rules 2027 country filter).
-- [ ] Hindi/Devanagari OCR evaluation (`OCR_LANG`, manner Rules language check).
+- [ ] Hindi/Devanagari support: PDF rendering DONE (Hind font bundled, this session);
+      in progress: wire `OCR_LANG` into the OCR engine + Hindi web-UI toggle.
 - [ ] Placement free-area auto-check from boxes (rules.json has the spec).
 - [ ] Postgres swap behind `repositories/` for multi-node.
 - [ ] PWA offline queue (store photo, sync when online).

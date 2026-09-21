@@ -283,3 +283,15 @@ k of one N together.
 - Hindi-label accuracy target vs English (manner rules need both)?
 - PDP-area source for length/area font tier (currently weight/volume path only)?
 - Evidence retention/quota policy for enforcement deployment?
+
+## 7. Recent shipped changes
+
+- **PDF report redesigned (2026-09-22)**: `_build_pdf` now produces 2 pages for 2
+  images (was 4) with richer detail — status chip + meta grid (engine/lang/
+  classifier/grade/hash), compliance strip, declarations table with OK / NOT
+  DETECTED / OVERRIDDEN chips + evidence snippets + extraction coverage, manual
+  override audit trail, violations with severity chips, 2-up photos with per-image
+  SHA-256, page-number footer. Bundled **Hind** (Latin+Devanagari, OFL) in
+  `backend/app/assets/fonts/`; `_font_for` routes Devanagari strings to it and
+  `_sanitize` stopped latin-1-mangling non-Latin text. Extraction pipeline untouched
+  (166/238 baseline unaffected); suite 205 passed, 2 skipped.
