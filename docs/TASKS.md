@@ -195,6 +195,28 @@ Next sweep (this session, run8/run9/run10 — prompt + gate hardening):
   205 passed, 2 skipped.
 
 Still to do:
+- **DONE (this session, run19_dates2): Raw-OCR two-date reconciliation gate
+  (`_reconcile_date_ordering` in `inspection_service.py`, wired into
+  `merge_extractions` after routing).** The idealisation behind the user's
+  'two dates → earlier is mfg, later is expiry' idea was measured first on the
+  real cached OCR token streams: only 3 products have BOTH dates readable in
+  the raw OCR while the SLM mis-assigns them. The gate scans the raw tokens
+  across all photos (`_collect_token_dates`), keeps only dates that resolve to
+  a real month + 2000-2099 year AND carry a 4-digit year or a date keyword
+  (MFG/PKD/USE BY/BEST BEFORE/EXP) or are month-name forms, then orders the
+  clean pair (earlier→mfg, later→exp) and applies it ONLY to: an inverted pair
+  (mfg>exp), a mis-filed expiry sitting in mfg with expiry blank (p24), or a
+  blank expiry next to a matching earlier mfg (p20). Healthy ordered pairs are
+  never touched; nutrition decimals / times / batch glues (`0626LC…`,
+  `10:00am`, `0.71`, `85/8`) never qualify. Golden audit (run19_dates2):
+  **166 → 171/238, exactly the 5 predicted cells (p15 +2, p20 +1, p24 +2),
+  0 regressions**; expiry recall 12M→10M+1W. +11 tests
+  (`tests/test_date_reconcile.py`); suite now 224 passed, 2 skipped. The
+  remaining expiry misses (p4/9/14/16/17/22/26/27/28) are OCR-blindness — the
+  date text never reaches the token stream — so no assignment gate can recover
+  them; they stay NOT DETECTED → inspector manual entry. p23's golden row is
+  physically impossible (exp 28/06/26 BEFORE mfg 25/12/26) — flagged suspect,
+  the gate rightly stays silent rather than force-ordering it.
 - **DONE (this session): OCR upgrade decision CLOSED — keep bundled PP-OCRv3.**
   Both PP-OCRv4 variants were measured on the golden set and REJECTED:
   run15-v4mobile (151/238, 17 broken cells → §3b-ii) and run17-v4server on

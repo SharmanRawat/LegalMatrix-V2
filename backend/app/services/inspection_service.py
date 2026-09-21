@@ -20,7 +20,7 @@ from app.repositories import inspections as inspection_repo
 from app.services import compliance_scorer, heatmap_generator, preprocessing
 from app.services.font_measurement import FontMeasurementService
 from app.services.price_engine import price_engine
-from app.services.value_normalizers import DATE_NOISE_RE, MONTHS
+from app.services.value_normalizers import DATE_NOISE_RE, MONTHS, parse_date
 
 EXPECTED_KEYS = [
     "mrp", "usp", "net_quantity", "product_name",
@@ -187,6 +187,110 @@ _FIELD_LABEL_TYPES = {
 }
 
 
+_DATE_KW_RE = re.compile(
+    r"\b(?:mfg|mfd|manuf\w*|pack(?:ed|ing)?|pkd|use\s*by|best\s*"
+    r"before|expir\w*|exp)\b|\bby\b",
+    re.I)
+_YEAR_4DIGIT_RE = re.compile(r"(?:19|20)\d{2}")
+# Numeric date-shaped groups: dd/mm[/yy(yy)] or mm/yyyy. (Month-name forms are
+# caught separately via _SINGLE_MONTH_RE so they don't need a keyword.)
+_NUM_DATE_RE = re.compile(r"\d{1,2}\s*[/.:-]\s*\d{1,4}(?:\s*[/.:-]\s*\d{2,4})?")
+
+
+def _collect_token_dates(results: List[Dict]) -> List[tuple]:
+    """Every plausible (year, month) date read anywhere in the raw OCR token
+    streams, deduped by (year, month), each with its max confidence. Sorted
+    ascending by (year, month).
+
+    Qualification guards (so nutrition decimals, times and license numbers can
+    never masquerade as expiry evidence):
+      * parse_date must resolve a real month AND a 2000-2099 year;
+      * numeric groups must contain a 4-digit year (2000+) or sit in a token
+        with a date keyword (MFG / PKD / USE BY / BEST BEFORE / EXP ...);
+      * month-name groups ('JAN 2027', 'FEB / 2025') qualify on their own.
+    """
+    best: Dict[tuple, tuple] = {}
+    for r in results:
+        for tok in (r.get("tokens") or []):
+            text = str(tok.get("text") or "").strip()
+            if not text:
+                continue
+            conf = float(tok.get("conf") or 0.0)
+            has_kw = bool(_DATE_KW_RE.search(text))
+            groups = []
+            masked = [c for c in text.upper()]
+
+            def _blank(a: int, b: int) -> None:
+                for j in range(a, b):
+                    masked[j] = " "
+
+            for gm in _SINGLE_MONTH_RE.finditer(text.upper()):
+                g = gm.group(0).strip()
+                if g:
+                    groups.append(g)
+                _blank(gm.start(), gm.end())
+            for nm in _NUM_DATE_RE.finditer("".join(masked)):
+                g = nm.group(0).strip()
+                if g and (has_kw or _YEAR_4DIGIT_RE.search(g)):
+                    groups.append(g)
+                _blank(nm.start(), nm.end())
+            for g in groups:
+                year, month = parse_date(g)
+                if year is None or month is None or not (2000 <= year <= 2099):
+                    continue
+                key = (year, month)
+                if key not in best or conf > best[key][0]:
+                    best[key] = (conf, g)
+    return sorted(
+        ((y, m, best[(y, m)][1]) for (y, m), (conf, g) in best.items()),
+        key=lambda t: t[:2],
+    )
+
+
+def _reconcile_date_ordering(merged: Dict, results: List[Dict]) -> None:
+    """Repair mfg/exp from raw-OCR date pairs (the 'two dates' rule).
+
+    The SLM can (rarely) hand back an inverted pair (mfg later than expiry:
+    p15 12/2025 + 01/2025), file the expiry into mfg with expiry left blank
+    (p24), or miss a clearly-printed second date (p20). The raw OCR token
+    streams carry both dates in these cases, so order them by (year, month)
+    and apply only where the current cells are empty, provably inverted, or
+    provably mis-filed. A healthy ordered pair is never touched (0 regressions).
+    """
+    cands = _collect_token_dates(results)
+    if len(cands) < 2:
+        return
+    (y1, m1, s1), (y2, m2, s2) = cands[0], cands[1]
+    if (y1, m1) >= (y2, m2):
+        return
+    cm = (merged.get("manufacturing_date") or "").strip()
+    ce = (merged.get("expiry_date") or "").strip()
+    pm = parse_date(cm) if cm else None
+    pe = parse_date(ce) if ce else None
+    clean1 = re.sub(r"\s*([/-])\s*", r"\1", s1)
+    clean2 = re.sub(r"\s*([/-])\s*", r"\1", s2)
+    if cm and ce:
+        # Both present: only repair a physically impossible pair (mfg later
+        # than expiry). Ordered or equal pairs are left alone.
+        if pm and pe and pm > pe and len(cands) == 2:
+            merged["manufacturing_date"] = clean1
+            merged["expiry_date"] = clean2
+    elif not cm and not ce:
+        if len(cands) == 2:
+            merged["manufacturing_date"] = clean1
+            merged["expiry_date"] = clean2
+    elif ce and not cm:
+        if pe == (y2, m2):
+            merged["manufacturing_date"] = clean1
+    else:  # cm present, ce empty
+        if pm == (y1, m1):
+            merged["expiry_date"] = clean2
+        elif pm == (y2, m2) and len(cands) == 2:
+            # mfg holds the later date: it is the mis-filed expiry (p24).
+            merged["manufacturing_date"] = clean1
+            merged["expiry_date"] = clean2
+
+
 def next_inspection_id() -> str:
     import secrets
     return f"LGM-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3).upper()}"
@@ -288,6 +392,13 @@ def merge_extractions(results: List[Dict],
 
     if labeled:
         merged = _route_by_label_types(results, label_types, merged)
+    # Raw-OCR two-date reconciliation: if the token streams across all photos
+    # carry both an earlier and a later clean date, use the physical invariant
+    # (manufacture before expiry) to repair inverted/mis-filed/missing pairs.
+    # Runs after routing so it is the final word on mfg/exp, but never touches
+    # a healthy ordered pair (0-regression guard) and never clobbers an
+    # inspector's manual override (those are applied post-merge on top).
+    _reconcile_date_ordering(merged, results)
     return merged
 
 

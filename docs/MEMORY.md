@@ -106,6 +106,7 @@ Two layers pulled after run6; measured on the same golden set:
 | run16-v3gpu | **PP-OCRv3 CPU + GPU-SLM fresh baseline** (GPU shifts 3B draws → not comparable to run14) | 166 | 69.7% |
 | run17-v4srv | **PP-OCRv4 SERVER det+rec swap on GPU** (fresh, same host, GPU SLM) | 169 | 71.0% |
 | run18-mrp | **v3 + MRP-only guarded VLM rescue** (fresh, same host, GPU SLM, `VLM_RESCUE_ENABLED=1`) — **measured, NOT adopted** → see §3b-iv | 172 | 72.3% |
+| run19-dates2 | **v3 + raw-OCR two-date reconciliation gate** (`_reconcile_date_ordering`, frozen run16 pipe cache — deterministic merge change) → see §3b-v | **171** | **71.8%** |
 
 - **run8-gate (deterministic, KEPT):** `_SEP_DATE_RE` no longer treats a bare
   space as a date separator, bare years restricted to 19xx/20xx, and numeric
@@ -244,13 +245,52 @@ Two layers pulled after run6; measured on the same golden set:
   both reproduced WITHOUT the rescue (3B GPU draw noise) — always A/B on a
   shared cached extraction to isolate a change from SLM draw variance.
 
+### 3b-v. Raw-OCR two-date reconciliation gate (run19_dates2) — SHIPPED
+
+- **Idea (user):** "identify text written in `//` brackets as a date in
+  general; if two such dates are extracted, the earlier one is the
+  manufacturing date and the later is the expiry date (expiry is always way
+  ahead)." Measured first against the real cached OCR token streams, per the
+  golden-audit discipline: only 3 of the 14 failing products actually have
+  BOTH dates readable in the raw OCR while the SLM mis-assigns or drops them.
+  The other 11 misses are OCR-blindness (the date text never reaches the
+  token stream at all — glare/angle/mangled glue like `UN25AU626U13D…`,
+  `FEB25HPR26…`) → no assignment gate can recover them; they stay
+  NOT DETECTED → inspector manual entry (by design).
+- **Implementation (`inspection_service.py`):** `_collect_token_dates` walks
+  every `result["tokens"]` across all photos and keeps only dates that
+  resolve via `parse_date` to a real month and a 2000-2099 year AND qualify
+  by carrying a 4-digit year, a date keyword (MFG/PKD/USE BY/BEST BEFORE/EXP/
+  …), or a month-name form. Nutrition decimals (`0.71`, `2.68g`), times
+  (`10:00am`), batch glues (`0626LC…`) and impossible day/month pairs
+  (`85/8`) never qualify. `_reconcile_date_ordering` (wired into
+  `merge_extractions` after routing, so it is final for mfg/exp in BOTH the
+  API and the audit path) orders the clean pair earlier→mfg/later→exp and
+  applies it ONLY to: an inverted pair (mfg > exp — p15 `12/2025`+`01/2025`),
+  a mis-filed expiry sitting in mfg with expiry blank (p24
+  `mfg 15/05/2026`, raw OCR has `16/02/2026`+`15/05/2026`), or a blank
+  expiry next to a matching earlier mfg (p20). Healthy ordered pairs are
+  never touched; manual overrides are applied post-merge so inspector values
+  win.
+- **Measured (frozen run16 pipe cache → deterministic merge-only diff):**
+  **166 → 171/238 (71.8%)**, exactly the 5 predicted cells — p15 mfg+exp +2,
+  p20 expiry +1, p24 mfg+exp +2 — and NOTHING else moved. Expiry recall
+  `12 missing + 2 wrong → 10 missing + 1 wrong`. +11 tests
+  (`tests/test_date_reconcile.py`); full suite **224 passed, 2 skipped**.
+- **p23 golden flag:** golden answers say mfg `25/12/26` / exp `28/06/26`
+  (expiry BEFORE manufacturing — physically impossible; looks like a swapped
+  entry). The gate stays silent there (its numeric dates lack 4-digit years/
+  keywords under the qualification rules) rather than force-ordering
+  evidence — do not treat as a fixable cell until the label photo is
+  re-read.
+
 ## 4. Commands
 
 ```bash
 # backend dev
 python -m venv backend/venv && backend/venv/bin/pip install -r backend/requirements.txt -r backend/requirements-dev.txt
 LEGALMATRIX_DATA_DIR=backend/data backend/venv/bin/uvicorn app.main:app --app-dir backend --port 8000
-cd backend && venv/bin/python -m pytest -q   # 76 passed, OCR mocked
+cd backend && venv/bin/python -m pytest -q   # 224 passed, 2 skipped, OCR mocked
 
 # audit one product against 7B oracle (WSL images path)
 python scripts/pipeline_audit.py --images-dir /mnt/e/SIH_installation_files/images --product 6
@@ -286,6 +326,13 @@ k of one N together.
 
 ## 7. Recent shipped changes
 
+- **Raw-OCR two-date reconciliation gate (2026-09-22)**: `merge_extractions`
+  now repairs inverted/mis-filed/missing mfg-exp pairs from clean date tokens
+  read anywhere in the raw OCR streams (earlier → mfg, later → expiry), with
+  strict qualification (real month + 2000-2099 year + 4-digit year / date
+  keyword / month-name) so nutrition decimals, times and batch glue never
+  qualify. **Golden audit 166 → 171/238, +5 cells (p15/p20/p24), 0
+  regressions**; suite 224 passed, 2 skipped. See TASKS.md + MEMORY.md §3b-v.
 - **PDF report redesigned (2026-09-22)**: `_build_pdf` now produces 2 pages for 2
   images (was 4) with richer detail — status chip + meta grid (engine/lang/
   classifier/grade/hash), compliance strip, declarations table with OK / NOT
