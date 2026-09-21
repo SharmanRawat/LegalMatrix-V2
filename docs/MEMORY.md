@@ -107,6 +107,7 @@ Two layers pulled after run6; measured on the same golden set:
 | run17-v4srv | **PP-OCRv4 SERVER det+rec swap on GPU** (fresh, same host, GPU SLM) | 169 | 71.0% |
 | run18-mrp | **v3 + MRP-only guarded VLM rescue** (fresh, same host, GPU SLM, `VLM_RESCUE_ENABLED=1`) — **measured, NOT adopted** → see §3b-iv | 172 | 72.3% |
 | run19-dates2 | **v3 + raw-OCR two-date reconciliation gate** (`_reconcile_date_ordering`, frozen run16 pipe cache — deterministic merge change) → see §3b-v | **171** | **71.8%** |
+| run20-repair | **v3 + date-token OCR repair** (`_repair_date_token` in `_collect_token_dates`: NO/N0→NOV in `dd-mon-yyyy`, glued `JUN25AUG26`→2 short dates, 2-digit-year expansion; frozen pipe cache — deterministic merge-only diff) → see §3b-vi | **175** | **73.5%** |
 
 - **run8-gate (deterministic, KEPT):** `_SEP_DATE_RE` no longer treats a bare
   space as a date separator, bare years restricted to 19xx/20xx, and numeric
@@ -256,7 +257,10 @@ Two layers pulled after run6; measured on the same golden set:
   The other 11 misses are OCR-blindness (the date text never reaches the
   token stream at all — glare/angle/mangled glue like `UN25AU626U13D…`,
   `FEB25HPR26…`) → no assignment gate can recover them; they stay
-  NOT DETECTED → inspector manual entry (by design).
+  NOT DETECTED → inspector manual entry (by design). **(run20 corrected part
+  of this: p9's `N0`/`NO`-for-NOV and p26's glued `JUN25AUG26` ARE recoverable
+  via merge-level glyph repair — see §3b-vi; the remainder — p4/p14/p16/p17/
+  p22/p28 etc. — stay sub-resolution.)**
 - **Implementation (`inspection_service.py`):** `_collect_token_dates` walks
   every `result["tokens"]` across all photos and keeps only dates that
   resolve via `parse_date` to a real month and a 2000-2099 year AND qualify
@@ -284,13 +288,55 @@ Two layers pulled after run6; measured on the same golden set:
   evidence — do not treat as a fixable cell until the label photo is
   re-read.
 
+### 3b-vi. Date-token OCR repair (run20_repair) — SHIPPED
+
+- **Idea (measured, same discipline as 3b-v):** some "OCR-blind" date misses
+  are really recognizer *month-mangling* or *short-date glue* that already
+  sits in the token stream. `_repair_date_token` (called from
+  `_collect_token_dates`, so the OCR layer stays byte-identical) fixes,
+  deterministically, before date evidence is grouped:
+  - `14-N0-2025` / `13-NO-2026` → `14-NOV-2025` / `13-NOV-2026` (0-for-O /
+    V-drop in NOV inside a `dd-mon-yyyy` shape — day kept). The fix is
+    day-glued anchored (`\d{1,2}[-/.:]N[O0]V?[-/.:]\d{2,4}`) so English
+    `No.` abbreviations ("KHASRA NO.66-72…" land-parcel line → p2 false
+    `NOV.66` = 2066) can NEVER rewrite — that regression, caught by the
+    full-CSV diff, is pinned by `test_number_abbreviation_never_repaired_to_nov`.
+  - glued short dates `UN25AU626U13059…` (p26 lid: `JUN25AUG26` run into a
+    barcode line) → `JUN/2025 AUG/2026`, via boundary-anchored
+    `UN→JUN` / `AU6→AUG` glyph fixes + a `month+2digits+month+2digits` pair
+    rewrite into two 4-digit-year groups. `FUN25`-style substrings can't fire
+    (anchored).
+  - standalone short forms `FEB25` → `FEB/2025` (2-digit year expansion);
+    a single short form is one candidate → gate still needs an ordered
+    second date to write (p27 `FEB25HPR26` stays silent — the sibling is
+    mangled beyond repair).
+  - month-name grouping now uses `_MONTH_YEAR_GLUE_RE` (optional leading day
+    `14-NOV-2025`, month word, 2-4 digit year) + `_MONTH_BARE_RE`, replacing
+    `_SINGLE_MONTH_RE` at the collector with identical qualification
+    (real month + 2000-2099 year via `parse_date`).
+- **Measured (frozen run16 pipe cache → deterministic merge-only diff):**
+  **171 → 175/238 (73.5%)**, exactly the 4 predicted cells — p9 mfg+exp +2
+  and p26 mfg+exp +2 — and NOTHING else moved. A full-CSV diff (not just
+  golden-present cells) caught the p2 `NOV.66` over-read before shipping.
+  +8 tests (`tests/test_date_reconcile.py`); full suite **232 passed,
+  2 skipped**.
+- **p4 ROI pass — MEASURED then NOT ADOPTED:** a date-zone ROI pass (crop
+  right of detected `Manufacture Dat`/`Expiry / Use by` headers, upscale
+  3-6×, CLAHE/adaptive-threshold/otsu/sharp variants, re-OCR) was dry-run on
+  all 72 images before touching code. CPU-v3 best reads are fragments only —
+  p4 mfg `17.`+`11`, exp `16/05.`/`16/05` (year always missing), confidence
+  ≤0.73. The recognizer cannot resolve a full date at any practical
+  preprocessing, so the ROI pass would write nothing honest. Remaining
+  sub-resolution date cells (p4/p14/p16/p17/p22/p28, plus p27's mangled
+  `HPR26`) stay NOT DETECTED → inspector manual entry, by design.
+
 ## 4. Commands
 
 ```bash
 # backend dev
 python -m venv backend/venv && backend/venv/bin/pip install -r backend/requirements.txt -r backend/requirements-dev.txt
 LEGALMATRIX_DATA_DIR=backend/data backend/venv/bin/uvicorn app.main:app --app-dir backend --port 8000
-cd backend && venv/bin/python -m pytest -q   # 224 passed, 2 skipped, OCR mocked
+cd backend && venv/bin/python -m pytest -q   # 232 passed, 2 skipped, OCR mocked
 
 # audit one product against 7B oracle (WSL images path)
 python scripts/pipeline_audit.py --images-dir /mnt/e/SIH_installation_files/images --product 6
@@ -333,6 +379,15 @@ k of one N together.
   keyword / month-name) so nutrition decimals, times and batch glue never
   qualify. **Golden audit 166 → 171/238, +5 cells (p15/p20/p24), 0
   regressions**; suite 224 passed, 2 skipped. See TASKS.md + MEMORY.md §3b-v.
+- **Date-token OCR repair (2026-09-22, run20)**: `_collect_token_dates` now
+  runs `_repair_date_token` (merge-level) fixing recognizer month-mangling —
+  `NO/N0 → NOV` in `dd-mon-yyyy` (day preserved), glued short dates
+  `UN25AU626… → JUN25AUG26 → JUN/2025 AUG/2026`, standalone `FEB25 → FEB/2025`.
+  **Golden audit 171 → 175/238, +4 cells (p9/p26), 0 regressions** (full-CSV
+  diff; a p2 `KHASRA NO.66` false `NOV.66` = 2066 over-read was caught and
+  pinned by test before shipping). p4 date-zone ROI pass measured and NOT
+  adopted (CPU-v3 reads fragments only). Suite 232 passed, 2 skipped. See
+  MEMORY.md §3b-vi.
 - **PDF report redesigned (2026-09-22)**: `_build_pdf` now produces 2 pages for 2
   images (was 4) with richer detail — status chip + meta grid (engine/lang/
   classifier/grade/hash), compliance strip, declarations table with OK / NOT

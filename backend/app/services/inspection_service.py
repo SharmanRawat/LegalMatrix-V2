@@ -193,8 +193,69 @@ _DATE_KW_RE = re.compile(
     re.I)
 _YEAR_4DIGIT_RE = re.compile(r"(?:19|20)\d{2}")
 # Numeric date-shaped groups: dd/mm[/yy(yy)] or mm/yyyy. (Month-name forms are
-# caught separately via _SINGLE_MONTH_RE so they don't need a keyword.)
+# caught separately via _MONTH_YEAR_GLUE_RE / _MONTH_BARE_RE so they don't need
+# a keyword.)
 _NUM_DATE_RE = re.compile(r"\d{1,2}\s*[/.:-]\s*\d{1,4}(?:\s*[/.:-]\s*\d{2,4})?")
+
+# ── date-token OCR repair (merge-level; the OCR layer is byte-identical) ─────
+# Deterministic repairs for the month-mangling the CPU recognizer does on
+# concise Indian date print. Applied only to the token text *inside the date
+# evidence collector*; qualification still requires a real month and a
+# 2000-2099 year via parse_date, so repairs can only create candidates that
+# parse as valid dates (never guessed years or months).
+#   * '14-N0-2025' / '13-NO-2026'            NO/N0 -> NOV inside dd-mon-yyyy
+#   * 'UN25AU626...' ('JUN25AUG26' glued)    short months glued into alnum runs
+#   * 'FEB25'                                2-digit year after a month word
+_DMON_FIX = re.compile(
+    r"(?P<pre>\d{1,2}[-/.:])(?P<mon>N[O0]V?)(?=[-/.:]\s*\d{2,4}\b)", re.I)
+_MONTH_GLUE_FIX = [
+    (re.compile(r"JHN(?=\s*/?\s*\d{2})"), "JAN"),
+    (re.compile(r"JU1(?=\s*/?\s*\d{2})"), "JUL"),
+    (re.compile(r"FE8(?=\s*/?\s*\d{2})"), "FEB"),
+    (re.compile(r"AU6(?=\s*/?\s*\d{2})"), "AUG"),
+    (re.compile(r"(?<![A-Z0-9])J?UN(?=\s*/?\s*\d{2})"), "JUN"),  # 'UN25' -> 'JUN25'
+    (re.compile(r"(?<![A-Z0-9])JN(?=\s*/?\s*\d{2})"), "JUN"),
+]
+_GLUED_PAIR_RE = re.compile(
+    r"(?<![0-9A-Z])(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|SEPT|OCT|NOV|DEC)"
+    r"(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|SEPT|OCT|NOV|DEC)(\d{2})(?!\d)",
+    re.I)
+_SHORT_MONTH_RE = re.compile(
+    r"(?<![A-Z])(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|SEPT|OCT|NOV|DEC|JANUARY"
+    r"|FEBRUARY|MARCH|APRIL|JUNE|JULY|AUGUST|SEPTEMBER|OCTOBER|NOVEMBER"
+    r"|DECEMBER)\s*/?\s*(\d{2})(?![0-9])", re.I)
+
+
+def _repair_date_token(text: str) -> str:
+    """Deterministically repair the OCR month-glyph forms listed above."""
+    t = str(text or "").upper()
+    t = _DMON_FIX.sub(lambda m: m.group("pre") + "NOV", t)
+    for pat, repl in _MONTH_GLUE_FIX:
+        t = pat.sub(repl, t)
+
+    def _pair(m):
+        return (f"{m.group(1)}/20{int(m.group(2)):02d} "
+                f"{m.group(3)}/20{int(m.group(4)):02d}")
+    t = _GLUED_PAIR_RE.sub(_pair, t)
+
+    def _expand(m):
+        mon = m.group(1)
+        yy = int(m.group(2))
+        return f"{mon}/20{yy:02d}" if 0 <= yy <= 99 else m.group(0)
+    t = _SHORT_MONTH_RE.sub(_expand, t)
+    return t
+
+
+# Month-name spans for the date-evidence collector: optional leading day
+# ('14-NOV-2025' keeps the day), month word, year. The trailing (?!\d) allows
+# glued barcode runs ('AUG/2026U13...') while still ending the year cleanly.
+# Bare month words without a year fall back to _MONTH_BARE_RE (and are then
+# rejected by parse_date, matching the pre-repair behavior).
+_MONTH_YEAR_GLUE_RE = re.compile(
+    rf"(?<![A-Z])(\d{{1,2}}\s*[-/.:]\s*)?({_MONTH_ALT})\s*[-/.:]?\s*(\d{{2,4}})(?!\d)",
+    re.I)
+_MONTH_BARE_RE = re.compile(
+    rf"(?<![A-Z])({_MONTH_ALT})(?![A-Z0-9])", re.I)
 
 
 def _collect_token_dates(results: List[Dict]) -> List[tuple]:
@@ -207,12 +268,15 @@ def _collect_token_dates(results: List[Dict]) -> List[tuple]:
       * parse_date must resolve a real month AND a 2000-2099 year;
       * numeric groups must contain a 4-digit year (2000+) or sit in a token
         with a date keyword (MFG / PKD / USE BY / BEST BEFORE / EXP ...);
-      * month-name groups ('JAN 2027', 'FEB / 2025') qualify on their own.
+      * month-name groups ('JAN 2027', 'FEB / 2025', '14-NOV-2025') qualify on
+        their own; the token is first run through _repair_date_token so common
+        recognizer month-mangles ('N0' -> NOV, glued 'JUN25AUG26') can qualify.
     """
     best: Dict[tuple, tuple] = {}
     for r in results:
         for tok in (r.get("tokens") or []):
-            text = str(tok.get("text") or "").strip()
+            text = _repair_date_token(tok.get("text"))
+            text = str(text).strip()
             if not text:
                 continue
             conf = float(tok.get("conf") or 0.0)
@@ -224,7 +288,12 @@ def _collect_token_dates(results: List[Dict]) -> List[tuple]:
                 for j in range(a, b):
                     masked[j] = " "
 
-            for gm in _SINGLE_MONTH_RE.finditer(text.upper()):
+            for gm in _MONTH_YEAR_GLUE_RE.finditer(text.upper()):
+                g = gm.group(0).strip()
+                if g:
+                    groups.append(g)
+                _blank(gm.start(), gm.end())
+            for gm in _MONTH_BARE_RE.finditer("".join(masked)):
                 g = gm.group(0).strip()
                 if g:
                     groups.append(g)

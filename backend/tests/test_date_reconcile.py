@@ -171,3 +171,110 @@ def test_longer_string_wins_unaffected_when_ordered():
     assert merged["product_name"] == "The Long Product Name"
     assert merged["manufacturing_date"] == "01/2026"
     assert merged["expiry_date"] == "01/2027"
+
+
+# ── date-token OCR repair (measured +4 on the golden audit: p9 + p26) ────────
+
+def test_n0_month_glyph_repaired_to_nov():
+    """p9: the recognizer reads '14-N0-2025' / '13-NO-2026' (0-for-O in NOV).
+    The merge-level repair turns these into NOV dates and fills both empty
+    cells; the day is preserved ('14-NOV-2025', not 'NOV-2025')."""
+    results = [
+        _res({"manufacturing_date": "", "expiry_date": ""},
+             tokens=["Mig. Date:", "14-N0-2025", "13-NO-2026"]),
+    ]
+    merged = merge_extractions(results, ["back"])
+    assert merged["manufacturing_date"] == "14-NOV-2025"
+    assert merged["expiry_date"] == "13-NOV-2026"
+
+
+def test_n0_month_glyph_ordered_from_ocr_pair():
+    """Same repair with the mfg/exp swapped in the raw stream: the gate orders
+    by (year, month), so the earlier date lands in mfg regardless of stream
+    order."""
+    results = [
+        _res({"manufacturing_date": "", "expiry_date": ""},
+             tokens=["13-NO-2026", "14-N0-2025"]),
+    ]
+    merged = merge_extractions(results, ["back"])
+    assert merged["manufacturing_date"] == "14-NOV-2025"
+    assert merged["expiry_date"] == "13-NOV-2026"
+
+
+def test_glued_short_form_pair_recovered():
+    """p26: the top-label lid prints 'JUN25AUG26' glued into an alnum run
+    ('UN25AU626U13059628968.00 / F1.66 / 9'). UN->JUN + AU6->AUG + pair
+    expansion recovers both short dates."""
+    results = [
+        _res({"manufacturing_date": "", "expiry_date": ""},
+             tokens=["UN25AU626U13059628968.00 / F1.66 / 9",
+                     "865CITER57.6283.00 / 40 / 7"]),
+    ]
+    merged = merge_extractions(results, ["top"])
+    assert merged["manufacturing_date"] == "JUN/2025"
+    assert merged["expiry_date"] == "AUG/2026"
+
+
+def test_single_short_form_no_write():
+    """p27: 'FEB25' alone is a single candidate (its sibling is mangled beyond
+    repair) -> cannot order a pair, gate stays silent."""
+    results = [
+        _res({"manufacturing_date": "", "expiry_date": ""},
+             tokens=["FEB25HPR26", "U13059628968.00:1.369"]),
+    ]
+    merged = merge_extractions(results, ["top"])
+    assert (merged.get("manufacturing_date") or "") == ""
+    assert (merged.get("expiry_date") or "") == ""
+
+
+def test_glued_month_without_short_year_no_candidate():
+    """'AUG626' has a 3-digit tail, not a 2-digit year: no short-form candidate
+    is produced (parse_date rejects 3-digit years), so nothing is written."""
+    results = [
+        _res({"manufacturing_date": "", "expiry_date": ""},
+             tokens=["Barcode AUG626", "U13059628968.00"]),
+    ]
+    merged = merge_extractions(results, ["top"])
+    assert (merged.get("manufacturing_date") or "") == ""
+    assert (merged.get("expiry_date") or "") == ""
+
+
+def test_repair_leaves_healthy_pair_and_noise_alone():
+    """Repairs must not touch a healthy ordered pair, and month-lookalike text
+    ('NO SUGAR ADDED') must never become a candidate."""
+    results = [
+        _res({"manufacturing_date": "07/04/26", "expiry_date": "06/04/27"},
+             tokens=["NO SUGAR ADDED", "FOURNOSUGAR00", "MRP ₹100"]),
+    ]
+    merged = merge_extractions(results, ["back"])
+    assert merged["manufacturing_date"] == "07/04/26"
+    assert merged["expiry_date"] == "06/04/27"
+
+
+def test_repair_full_month_names_unaffected():
+    """Full month names ('NOVEMBER 2025') and clean short dates still group
+    exactly as before the repair path exists."""
+    results = [
+        _res({"manufacturing_date": "", "expiry_date": ""},
+             tokens=["Packed NOVEMBER 2025", "Best before NOV / 2026"]),
+    ]
+    merged = merge_extractions(results, ["back"])
+    assert merged["manufacturing_date"] == "NOVEMBER 2025"
+    assert merged["expiry_date"] == "NOV/2026"
+
+
+def test_number_abbreviation_never_repaired_to_nov():
+    """p2 regression: 'KHASRA NO.66-72,MAKHIALI DUNDI,PEERPURA' is a land
+    parcel 'No.' line — 'NO.' must NOT rewrite to 'NOV.' (it previously
+    invented expiry 'NOV.66' = 2066 when paired with another date token).
+    The dd-mon-yyyy repair only fires on day-glued forms like '14-N0-2025'."""
+    from app.services.inspection_service import _repair_date_token
+    khasra = "KHASRA NO.66-72,MAKHIALI DUNDI,PEERPURA"
+    assert _repair_date_token(khasra) == khasra.upper()
+    results = [
+        _res({"manufacturing_date": "01/2026", "expiry_date": ""},
+             tokens=[khasra, "01.01.2026"]),
+    ]
+    merged = merge_extractions(results, ["back"])
+    assert (merged.get("manufacturing_date") or "") == "01/2026"
+    assert (merged.get("expiry_date") or "") == ""

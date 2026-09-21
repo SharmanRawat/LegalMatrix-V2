@@ -212,11 +212,31 @@ Still to do:
   **166 → 171/238, exactly the 5 predicted cells (p15 +2, p20 +1, p24 +2),
   0 regressions**; expiry recall 12M→10M+1W. +11 tests
   (`tests/test_date_reconcile.py`); suite now 224 passed, 2 skipped. The
-  remaining expiry misses (p4/9/14/16/17/22/26/27/28) are OCR-blindness — the
-  date text never reaches the token stream — so no assignment gate can recover
-  them; they stay NOT DETECTED → inspector manual entry. p23's golden row is
+  remaining expiry misses (p4/9/14/16/17/22/26/27/28) were assessed as
+  OCR-blindness at the time — run20 (below) recovered p9 and p26 from the
+  token stream after all; the rest (p4/14/16/17/22/27/28) remain
+  sub-resolution → NOT DETECTED → inspector manual entry. p23's golden row is
   physically impossible (exp 28/06/26 BEFORE mfg 25/12/26) — flagged suspect,
   the gate rightly stays silent rather than force-ordering it.
+- **DONE (this session, run20_repair): Date-token OCR repair.** The
+  full-CSV-diff discipline used for run19 was extended to golden-*blank* cells
+  (an over-read is as much a regression as a miss). `_collect_token_dates` now
+  runs `_repair_date_token` (merge-level — the OCR layer stays
+  byte-identical): `NO/N0 → NOV` inside `dd-mon-yyyy` (p9 `14-N0-2025` /
+  `13-NO-2026` → recovered, day preserved; anchored to the day-glue so
+  "KHASRA NO.66" can't become `NOV.66`=2066 — a false over-read the diff
+  caught on p2 and is pinned by a test), glued short dates `UN25AU626… →
+  JUN25AUG26 → JUN/2025 AUG/2026` (p26 lid; boundary-anchored so `FUN25`
+  can't fire), and standalone 2-digit years `FEB25 → FEB/2025` (p27 stays
+  silent — one mangled sibling, no ordered pair). Golden audit
+  (run20_repair, frozen pipe cache): **171 → 175/238, exactly the 4 predicted
+  cells (p9 +2, p26 +2), 0 regressions**; room-level diff is exactly those
+  4 rows. Suite now **232 passed, 2 skipped**. The p4 date-zone ROI pass was
+  built and dry-run on all 72 images — CPU-v3 reads are fragments only
+  (`17.`/`11`, `16/05.`), full dates (`17/11/2025`, `16/05/2027`) never
+  resolve at any sensible preprocessing → **ROI pass NOT adopted**; p4's
+  dates stay NOT DETECTED → inspector entry, per honesty-over-accuracy. See
+  MEMORY.md §3b-vi.
 - **DONE (this session): OCR upgrade decision CLOSED — keep bundled PP-OCRv3.**
   Both PP-OCRv4 variants were measured on the golden set and REJECTED:
   run15-v4mobile (151/238, 17 broken cells → §3b-ii) and run17-v4server on
