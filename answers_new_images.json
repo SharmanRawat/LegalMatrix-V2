@@ -1,0 +1,62 @@
+{
+ "product1": {
+  "mrp": "₹ 110.00",
+  "usp": "₹ 0.55/N",
+  "net_quantity": "200 N",
+  "product_name": "TULIPS PAPER STICK Cotton Swabs",
+  "manufacturer": "Suparshva Swabs (I) Ltd.",
+  "manufacturing_date": "DEC. 2024",
+  "expiry_date": "",
+  "consumer_care": "customercare@suparshva.in",
+  "dimensions": "",
+  "edible": "no"
+ },
+ "product2": {
+  "mrp": "₹ 155",
+  "usp": "",
+  "net_quantity": "200 ml (182 g)",
+  "product_name": "Parachute 100% Pure Coconut Oil",
+  "manufacturer": "Marico Limited",
+  "manufacturing_date": "",
+  "expiry_date": "",
+  "consumer_care": "1800222248, csc@marico.com",
+  "dimensions": "",
+  "edible": "no"
+ },
+ "product3": {
+  "mrp": "₹ 480.00",
+  "usp": "",
+  "net_quantity": "150 ml",
+  "product_name": "DAVIDOFF Cool Water INTENSE",
+  "manufacturer": "",
+  "manufacturing_date": "",
+  "expiry_date": "",
+  "consumer_care": "",
+  "dimensions": "",
+  "edible": "no"
+ },
+ "product4": {
+  "mrp": "₹ 325.00",
+  "usp": "",
+  "net_quantity": "200ml",
+  "product_name": "BRUT ORIGINAL",
+  "manufacturer": "SAWARIYA FUTUREWORKS LIMITED",
+  "manufacturing_date": "06/2022",
+  "expiry_date": "12/2024",
+  "consumer_care": "9356594585, info@sawariya.in",
+  "dimensions": "",
+  "edible": "no"
+ },
+ "product5": {
+  "mrp": "₹ 499.00",
+  "usp": "₹ 2.49/ml",
+  "net_quantity": "200ml",
+  "product_name": "WishCare Sunscreen Body Lotion",
+  "manufacturer": "H.E.N.P.L",
+  "manufacturing_date": "04/2026",
+  "expiry_date": "",
+  "consumer_care": "+91-8336833230, hello@mywishcare.com",
+  "dimensions": "",
+  "edible": "no"
+ }
+}

@@ -9,4 +9,6 @@ router = APIRouter()
 
 @router.get("/dashboard/stats")
 def get_stats(user=Depends(require_roles("ADMIN", "INSPECTOR", "VIEWER"))):
-    return inspection_repo.dashboard_stats()
+    # Non-admins only see aggregates + recent rows for scans they created.
+    user_id = None if user.get("role") == "ADMIN" else int(user.get("uid") or -1)
+    return inspection_repo.dashboard_stats(user_id=user_id)

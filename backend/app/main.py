@@ -17,11 +17,44 @@ async def lifespan(app: FastAPI):
 
 
 def _seed_default_admin(data_dir=None):
-    """Create a demo admin account if no users exist yet."""
+    """Create the configured admin account if no users exist, or rotate its
+    password at boot when the operator explicitly set
+    LEGALMATRIX_ADMIN_PASSWORD (credential rotation for shared demos).
+
+    The password itself is never printed — logs carry the username only.
+    """
+    from pathlib import Path
+
+    from app import config as cfg
     from app.repositories import users as user_repo
-    if not user_repo.list_users():
-        user_repo.create_user("admin", "System Administrator", "ADMIN", "admin@123")
-        print("[Startup] Seeded default admin account: admin / admin@123  (CHANGE IN PRODUCTION)", flush=True)
+
+    admin_username, admin_password, password_explicit = cfg.get_admin_credentials()
+    data_dir = cfg.get_data_dir() if data_dir is None else Path(data_dir)
+    db_path = str(data_dir / "legalmatrix.db")
+
+    existing = user_repo.get_user_by_username(admin_username, db_path=db_path)
+    if existing is None:
+        user_repo.create_user(
+            admin_username, "System Administrator", "ADMIN", admin_password,
+            db_path=db_path,
+        )
+        print(
+            f"[Startup] Seeded admin account: {admin_username} "
+            "(set LEGALMATRIX_ADMIN_PASSWORD to change it)",
+            flush=True,
+        )
+    elif password_explicit and not user_repo.verify_password(
+        admin_password, existing["password_hash"], existing["salt"]
+    ):
+        user_repo.update_password(admin_username, admin_password, db_path=db_path)
+        print(f"[Startup] Rotated password for admin account: {admin_username}", flush=True)
+
+    if cfg.AUTH_SECRET_IS_DEFAULT:
+        print(
+            "[Startup] WARNING: LEGALMATRIX_AUTH_SECRET is the insecure default — "
+            "set a random value before any shared demo/deployment.",
+            flush=True,
+        )
 
 
 app = FastAPI(

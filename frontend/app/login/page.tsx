@@ -81,7 +81,7 @@ export default function LoginPage() {
             {loading ? t('Signing in…') : t('Sign in')}
           </button>
           <p className="text-[11px] text-gray-400 text-center">
-            {t('Default demo account: admin / admin@123')}
+            {t('Demo admin login: username admin — password is configured in backend/.env (LEGALMATRIX_ADMIN_PASSWORD)')}
           </p>
         </form>
       </div>

@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import {
   CheckCircle, AlertCircle, FileJson, FileDown, ArrowLeft, AlertTriangle,
-  Pencil, Save,
+  Pencil, Save, FileText,
 } from 'lucide-react'
 import toast, { Toaster } from 'react-hot-toast'
 import Navbar from '@/app/components/Navbar'
@@ -94,6 +94,13 @@ interface InspectionDetail {
   evidence?: { hash: string; images?: EvidenceImage[] }
   field_evidence?: Record<string, FieldEvidence>
   extraction_confidence?: ExtractionConfidence
+  /** Display-only raw-OCR transcript (flattened from stored meta). */
+  ocr_transcript?: Array<{
+    filename: string
+    count: number
+    low_conf: number
+    text: string
+  }>
 }
 
 const statusColor: Record<string, string> = {
@@ -123,6 +130,7 @@ const FIELD_LABELS: Record<string, string> = {
   net_quantity: 'Net Quantity',
   product_name: 'Product Name',
   manufacturer: 'Manufacturer',
+  manufacturer_address: 'Manufacturer Address',
   manufacturing_date: 'Manufacturing Date',
   expiry_date: 'Expiry Date',
   consumer_care: 'Consumer Care',
@@ -243,6 +251,18 @@ export default function InspectionDetailPage() {
       toast.success(t('{format} exported', { format: format.toUpperCase() }))
     } catch {
       toast.error(t('Export failed'))
+    }
+  }
+
+  const downloadReport = async () => {
+    try {
+      await downloadBlob(
+        `/api/inspect/${id}/report`,
+        `LegalMatrix-Report-${id}.pdf`,
+      )
+      toast.success(t('PDF report downloaded!'))
+    } catch {
+      toast.error(t('Failed to download PDF report'))
     }
   }
 
@@ -476,6 +496,49 @@ export default function InspectionDetailPage() {
               </div>
             </section>
 
+            {data.ocr_transcript && data.ocr_transcript.length > 0 && (
+              <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+                <details className="group">
+                  <summary className="flex items-center justify-between cursor-pointer list-none">
+                    <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+                      <FileText className="w-5 h-5 text-gray-400" />
+                      {t('Raw label text (OCR transcript)')}
+                    </h3>
+                    <span className="text-xs text-gray-500">
+                      {t('{n} text regions', {
+                        n: data.ocr_transcript.reduce((s, e) => s + e.count, 0),
+                      })}
+                    </span>
+                  </summary>
+                  <div className="mt-3 space-y-3">
+                    {data.ocr_transcript.map((entry) => (
+                      <div key={entry.filename} className="bg-gray-50 rounded-lg p-3">
+                        <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
+                          <span className="font-mono text-xs font-semibold text-gray-600">
+                            {entry.filename}
+                          </span>
+                          <span className="text-[11px] text-gray-400">
+                            {t('{count} regions', { count: entry.count })}
+                            {entry.low_conf > 0 && (
+                              <span className="text-amber-600">
+                                {' '}· +{entry.low_conf} {t('low-confidence')}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                        <pre className="text-xs text-gray-700 whitespace-pre-wrap break-words font-mono leading-relaxed max-h-56 overflow-y-auto">
+                          {entry.text || t('No text detected')}
+                        </pre>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-3 text-[11px] text-gray-400">
+                    {t('Shown for transparency — this raw text is never used to fill declarations.')}
+                  </p>
+                </details>
+              </section>
+            )}
+
             {data.font_measurement && (
               <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
                 <h3 className="font-semibold text-gray-800 mb-3">{t('Font Size & Readability')}</h3>
@@ -652,6 +715,12 @@ export default function InspectionDetailPage() {
                 className="flex-1 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center justify-center gap-2 font-semibold"
               >
                 <FileDown className="w-4 h-4" /> {t('Export CSV')}
+              </button>
+            <button
+                onClick={downloadReport}
+                className="flex-1 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2 font-semibold"
+              >
+                <FileDown className="w-4 h-4" /> {t('Download PDF Report')}
               </button>
             <button
                 onClick={downloadCertificate}

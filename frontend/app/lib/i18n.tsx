@@ -49,6 +49,17 @@ const HI: Record<string, string> = {
   'Failed to inspect images.': 'छवियों की जांच विफल रही।',
   'Vision-model inspection typically takes 1-3 min per image. The request is in flight.':
     'विज़न-मॉडल जांच में प्रति छवि आमतौर पर 1-3 मिनट लगते हैं। अनुरोध प्रगति पर है।',
+  'Live pipeline': 'लाइव प्रोसेसिंग',
+  events: 'ईवेंट',
+  'Uploading images…': 'छवियाँ अपलोड हो रही हैं…',
+  'Manufacturer Address': 'निर्माता का पता',
+  'Raw label text (OCR transcript)': 'लेबल का कच्चा पाठ (ओसीआर ट्रांसक्रिप्ट)',
+  '{n} text regions': '{n} पाठ क्षेत्र',
+  '{count} regions': '{count} क्षेत्र',
+  'low-confidence': 'कम-विश्वसनीय',
+  'No text detected': 'कोई पाठ नहीं मिला',
+  'Shown for transparency — this raw text is never used to fill declarations.':
+    'पारदर्शिता के लिए दिखाया गया — यह कच्चा पाठ कभी भी घोषणाओं को भरने के लिए उपयोग नहीं किया जाता।',
   'I confirm all {n} photos show the same product being inspected.':
     'मैं पुष्टि करता/करती हूँ कि सभी {n} फ़ोटो एक ही उत्पाद दिखा रहे हैं।',
   'Required before analyzing — mixing photos of different products gives a misleading compliance score.':
@@ -171,8 +182,31 @@ const HI: Record<string, string> = {
   'Export failed': 'निर्यात विफल रहा',
   'Failed to load inspection': 'जांच लोड नहीं हो सकी',
 
+  // ---- Certificate verification page ----
+  'Certificate verification': 'प्रमाणपत्र सत्यापन',
+  'Open a certificate QR code link to verify a LegalMatrix compliance certificate.':
+    'LegalMatrix अनुपालन प्रमाणपत्र सत्यापित करने के लिए प्रमाणपत्र क्यूआर कोड लिंक खोलें।',
+  'Verifying certificate…': 'प्रमाणपत्र सत्यापित हो रहा है…',
+  'Unable to verify': 'सत्यापित नहीं किया जा सका',
+  'No inspection matches this certificate code.': 'इस प्रमाणपत्र कोड से कोई जांच मेल नहीं खाती।',
+  'Verification service unavailable. Try again later.': 'सत्यापन सेवा अनुपलब्ध है। बाद में पुनः प्रयास करें।',
+  'Certificate verified': 'प्रमाणपत्र सत्यापित हुआ',
+  'Verification warning': 'सत्यापन चेतावनी',
+  'Authentic': 'प्रामाणिक',
+  'Hash mismatch': 'हैश मेल नहीं खाता',
+  'Authentic — certificate and evidence hash match.':
+    'प्रामाणिक — प्रमाणपत्र और साक्ष्य हैश मेल खाते हैं।',
+  'Certificate found, but the evidence hash does not match the stored record.':
+    'प्रमाणपत्र मिला, लेकिन साक्ष्य हैश संग्रहीत रिकॉर्ड से मेल नहीं खाता।',
+  'Inspection ID': 'जांच आईडी',
+  'Product': 'उत्पाद',
+  'Status / Score': 'स्थिति / स्कोर',
+  'Issued': 'जारी किया गया',
+  'Evidence SHA-256': 'साक्ष्य SHA-256',
+
   // ---- Dashboard ----
   'Compliance Dashboard': 'अनुपालन डैशबोर्ड',
+  Instructor: 'निरीक्षक',
   'Live overview of all inspections': 'सभी जांचों का लाइव अवलोकन',
   'Total Inspections': 'कुल जांच',
   'Avg Compliance Score': 'औसत अनुपालन स्कोर',
@@ -187,6 +221,59 @@ const HI: Record<string, string> = {
   'Unknown product': 'अज्ञात उत्पाद',
   'Start one now': 'अभी एक शुरू करें',
   'Failed to load dashboard': 'डैशबोर्ड लोड नहीं हो सका',
+
+  // ---- Font Measurement (roadmap) ----
+  'Font Size Measurement': 'फ़ॉन्ट आकार माप',
+  'Roadmap · Coming soon': 'रोडमैप · जल्द आ रहा है',
+  'Legal Metrology (Packaged Commodities) Rules 2011 require minimum numeral heights that scale with net quantity (1–4 mm normal, 2–6 mm embossed). Measuring them reliably is the next engineering milestone.':
+    'विधिक मेट्रोलॉजी (पैक किए गए उपभोक्ता सामान) नियम 2011 के अनुसार शुद्ध मात्रा के अनुसार अंकों की न्यूनतम ऊँचाई आवश्यक है (सामान्य 1–4 मिमी, उभरे हुए 2–6 मिमी)। इन्हें विश्वसनीय रूप से मापना अगला इंजीनियरिंग माइलस्टोन है।',
+  'Try a new inspection': 'नई जांच आज़माएँ',
+  'What the pipeline does today': 'पाइपलाइन आज क्या करती है',
+  'Calibration chain (credit card → barcode → EXIF)': 'अंशांकन श्रृंखला (क्रेडिट कार्ड → बारकोड → EXIF)',
+  'A physically traceable reference converts pixels to millimetres: an ISO/IEC 7810 card (85.60 × 53.98 mm) beside the product is the exact reference; a product barcode is coarser; phone EXIF camera-metrics is never an automated verdict.':
+    'एक भौतिक रूप से अनुरेखणीय संदर्भ पिक्सेल को मिलीमीटर में बदलता है: उत्पाद के पास रखा ISO/IEC 7810 कार्ड (85.60 × 53.98 मिमी) सटीक संदर्भ है; उत्पाद बारकोड मोटा है; फ़ोन EXIF कैमरा-मेट्रिक्स कभी स्वचालित निर्णय नहीं देती।',
+  'Honest measurement, never fabricated': 'ईमानदार माप, कभी निर्मित नहीं',
+  'When a calibration reference is present, numeral height is measured in millimetres with an explicit uncertainty band. When none is present, the axis is excluded from the score and reported as REVIEW_REQUIRED with an auditable reason — we never output a millimetre value we cannot defend.':
+    'जब अंशांकन संदर्भ मौजूद होता है, तो अंकों की ऊँचाई स्पष्ट अनिश्चितता सीमा के साथ मिलीमीटर में मापी जाती है। जब कोई संदर्भ नहीं होता, तो अक्ष को स्कोर से बाहर रखा जाता है और पता लगाने योग्य कारण के साथ REVIEW_REQUIRED घोषित किया जाता है — हम कभी ऐसा मिलीमीटर मान नहीं निकालते जिसका हम बचाव न कर सकें।',
+  'Defensibility gates on every reading': 'हर रीडिंग पर बचाव-योग्यता द्वार',
+  'Each text region passes geometric and glyph sanity checks. A measured height outside the plausible range forces manual review, and the uncalibrated lower-half heuristic never produces an automated verdict.':
+    'प्रत्येक टेक्स्ट क्षेत्र ज्यामितीय और ग्लिफ़ सत्यापन से गुजरता है। संभावित सीमा से बाहर मापी गई ऊँचाई मैन्युअल समीक्षा के लिए बाध्य करती है, और बिना अंशांकन वाला निचला-आधा ह्यूरिस्टिक कभी स्वचालित निर्णय नहीं देता।',
+  "What's next": 'आगे क्या',
+  'Guided calibration-card capture flow in the capture UI — the inspector is told when a reference is missing.':
+    'कैप्चर UI में निर्देशित अंशांकन-कार्ड कैप्चर प्रवाह — निरीक्षक को बताया जाता है कि संदर्भ गायब है।',
+  'Per-field measured numeral height rendered on the PDF report and the compliance radar.':
+    'प्रत्येक फ़ील्ड की मापी गई अंक ऊँचाई PDF रिपोर्ट और अनुपालन रडार पर दिखाई जाएगी।',
+  'Quantitative regression set of synthetic labels with known pixel heights to validate every change.':
+    'ज्ञात पिक्सेल ऊँचाई वाले सिंथेटिक लेबलों का मात्रात्मक प्रतिगमन सेट ताकि हर बदलाव सत्यापित हो।',
+  'Until the calibration-card workflow ships, an uncalibrated font-size axis is reported as REVIEW_REQUIRED — never as a fabricated violation.':
+    'जब तक अंशांकन-कार्ड कार्यप्रवाह तैयार नहीं होता, बिना अंशांकन वाला फ़ॉन्ट-आकार अक्ष REVIEW_REQUIRED घोषित होता है — कभी भी निर्मित उल्लंघन के रूप में नहीं।',
+  'This page documents the roadmap. The working pipeline — rule engine, evidence chain, VLM extraction, offline PWA — is unchanged and submission-ready.':
+    'यह पृष्ठ रोडमैप दर्शाता है। कार्यशील पाइपलाइन — रूल इंजन, साक्ष्य श्रृंखला, वीएलएम निष्कर्षण, ऑफ़लाइन PWA — अपरिवर्तित और सबमिशन-तैयार है।',
+
+  // ---- Admin (user management) ----
+  'User Management': 'उपयोगकर्ता प्रबंधन',
+  'Admin-only: search users, view their scans, reset passwords': 'केवल-एडमिन: उपयोगकर्ता खोजें, उनके स्कैन देखें, पासवर्ड रीसेट करें',
+  'Admin only': 'केवल एडमिन',
+  'This page is restricted to administrators.': 'यह पृष्ठ केवल एडमिनिस्ट्रेटरों के लिए है।',
+  'Back to dashboard': 'डैशबोर्ड पर वापस जाएँ',
+  'Search by username or name…': 'उपयोगकर्ता नाम या नाम से खोजें…',
+  'All roles': 'सभी भूमिकाएँ',
+  'Passwords are stored as one-way hashes and can never be viewed — an admin can only reset one.':
+    'पासवर्ड एक-तरफ़ा हैश के रूप में संग्रहीत होते हैं और कभी देखे नहीं जा सकते — एडमिन केवल रीसेट कर सकता है।',
+  'No users found matching your filters.': 'आपके फ़िल्टर से मेल खाता कोई उपयोगकर्ता नहीं मिला।',
+  Name: 'नाम',
+  'Reset password': 'पासवर्ड रीसेट करें',
+  'Reset password for {username}': '{username} का पासवर्ड रीसेट करें',
+  'New password': 'नया पासवर्ड',
+  'Enter a new password': 'नया पासवर्ड दर्ज करें',
+  'Set password': 'पासवर्ड सेट करें',
+  'Password reset for {username}': '{username} का पासवर्ड रीसेट हो गया',
+  'Reset failed': 'रीसेट विफल रहा',
+  'The old password is unrecoverable (stored as a hash). The user must use the new one from now on.':
+    'पुराना पासवर्ड पुनर्प्राप्त नहीं किया जा सकता (हैश के रूप में संग्रहीत)। उपयोगकर्ता को अब से नया पासवर्ड उपयोग करना होगा।',
+  'Scans by {name}': '{name} द्वारा किए गए स्कैन',
+  'Failed to load scans': 'स्कैन लोड नहीं हो सके',
+  'No scans yet for this user.': 'इस उपयोगकर्ता के अभी कोई स्कैन नहीं हैं।',
 
   // ---- History ----
   'Inspection History': 'जांच इतिहास',
@@ -214,7 +301,7 @@ const HI: Record<string, string> = {
   'Enter username and password': 'उपयोगकर्ता नाम और पासवर्ड दर्ज करें',
   'Welcome, {name}!': 'स्वागत है, {name}!',
   'Login failed': 'लॉगिन विफल रहा',
-  'Default demo account: admin / admin@123': 'डिफ़ॉल्ट डेमो खाता: admin / admin@123',
+  'Demo admin login: username admin — password is configured in backend/.env (LEGALMATRIX_ADMIN_PASSWORD)': 'डेमो एडमिन लॉगिन: उपयोगकर्ता नाम admin — पासवर्ड backend/.env में कॉन्फ़िगर किया गया है (LEGALMATRIX_ADMIN_PASSWORD)',
 }
 
 const STATUS_HI: Record<string, string> = {

@@ -39,26 +39,19 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import cv2
 import numpy as np
-from PIL import Image
 
 from app.services.scale_calibrator import (
     ScaleCalibrator,
     calibration_rejected_reason,
     detect_credit_card,
     compute_ppm_from_barcode as _scan_barcode,
+    _ppm_from_focal,
+    _exif_calibration_with_reason,
 )
 
 logger = logging.getLogger(__name__)
 
 BARCODE_UNCERTAINTY = 0.15
-EXIF_UNCERTAINTY = 0.20
-
-EXIF_MIN_PPM = 1.0
-EXIF_MAX_PPM = 300.0
-CARD_MIN_PPM = 1.0
-CARD_MAX_PPM = 300.0
-
-SENSOR_WIDTH_35MM = 36.0
 
 BOX_MAX_AREA_FRACTION = 0.15
 BOX_MIN_AREA_FRACTION = 0.002
@@ -72,11 +65,6 @@ BOX_MAX_HEIGHT_REL_STDDEV = 0.4
 IMPLAUSIBLE_LOW_FACTOR = 0.3
 IMPLAUSIBLE_HIGH_FACTOR = 10.0
 
-_EXIF_EXIF_IFD = 0x8769
-_EXIF_FOCAL_LEN = 0x9205
-_EXIF_SUBJECT_DISTANCE = 0x920A
-_EXIF_FOCAL_35MM = 0xA405
-
 ImageOrPath = Union[str, np.ndarray]
 
 
@@ -84,68 +72,6 @@ def _load_image(image: ImageOrPath) -> Optional[np.ndarray]:
     if isinstance(image, np.ndarray):
         return image
     return cv2.imread(str(image))
-
-
-def _ppm_from_focal(focal_35: float, distance_m: float, image_width: int) -> Optional[float]:
-    if not focal_35 or focal_35 <= 0 or not distance_m or distance_m <= 0:
-        return None
-    focal_35 = float(focal_35)
-    dist_mm = float(distance_m) * 1000.0
-    half_angle = np.arctan((SENSOR_WIDTH_35MM / 2.0) / focal_35)
-    width_at_plane_mm = 2.0 * dist_mm * np.tan(half_angle)
-    if width_at_plane_mm <= 0:
-        return None
-    ppm = image_width / width_at_plane_mm
-    return float(ppm) if ppm > 0 else None
-
-
-def _exif_calibration_with_reason(image_path: str):
-    try:
-        with Image.open(image_path) as pil:
-            if pil is None:
-                return None, "image_unreadable"
-            exif = pil.getexif()
-        if not exif:
-            return None, "exif_tags_missing"
-
-        sub_ifd = exif.get_ifd(_EXIF_EXIF_IFD) or {}
-
-        f35 = sub_ifd.get(_EXIF_FOCAL_35MM) or exif.get(_EXIF_FOCAL_35MM)
-        if not f35:
-            f35 = sub_ifd.get(_EXIF_FOCAL_LEN) or exif.get(_EXIF_FOCAL_LEN)
-        if not f35:
-            return None, "exif_focal_length_missing"
-
-        dist_m = sub_ifd.get(_EXIF_SUBJECT_DISTANCE) or exif.get(_EXIF_SUBJECT_DISTANCE)
-        if not dist_m or float(dist_m) <= 0:
-            return None, "exif_subject_distance_missing"
-
-        f35 = float(f35)
-
-        img = cv2.imread(image_path)
-        if img is None:
-            return None, "image_unreadable"
-        h, w = img.shape[:2]
-        ppm = _ppm_from_focal(f35, float(dist_m), w)
-        if ppm is None or not (EXIF_MIN_PPM <= ppm <= EXIF_MAX_PPM):
-            logger.warning(f"EXIF calibration implausible (ppm={ppm}) — declining estimate for {image_path}")
-            return None, f"exif_implausible(ppm={None if ppm is None else round(ppm, 2)})"
-        info = {
-            "focal_35mm_equiv": round(f35, 2),
-            "subject_distance_m": round(float(dist_m), 2),
-            "horizontal_fov_deg": round(
-                float(np.degrees(2.0 * np.arctan((SENSOR_WIDTH_35MM / 2.0) / f35))), 2
-            ),
-        }
-        return (ppm, info), None
-    except Exception as e:
-        logger.error(f"EXIF calibration failed: {e}")
-        return None, "exif_parse_error"
-
-
-def _exif_calibration(image_path: str):
-    result, _reason = _exif_calibration_with_reason(image_path)
-    return result
 
 
 class FontMeasurementService:
@@ -399,6 +325,12 @@ class FontMeasurementService:
             return result
 
         if method != "cap_height":
+            result["status"] = "REVIEW_REQUIRED"
+            return result
+
+        if cal["calibration"] == "exif":
+            # Camera-metric EXIF reference (focal length + subject distance) is
+            # never an automated verdict — informational review only.
             result["status"] = "REVIEW_REQUIRED"
             return result
 

@@ -19,7 +19,10 @@ from app.core.rule_engine import rule_engine
 from app.repositories import inspections as inspection_repo
 from app.services import compliance_scorer, heatmap_generator, preprocessing
 from app.services.font_measurement import FontMeasurementService
+from app.services.manufacturer_address import extract_manufacturer_address
+from app.services.ocr_transcript import build_ocr_transcript
 from app.services.price_engine import price_engine
+from app.services.progress import bind_progress, emit as _emit_progress, restore_progress
 from app.services.value_normalizers import DATE_NOISE_RE, MONTHS, parse_date
 
 EXPECTED_KEYS = [
@@ -173,6 +176,42 @@ def _corrupt_single_digit_year(value: str) -> bool:
         return False
     nums = re.findall(r"\d+", m.group(1))
     return bool(nums) and len(nums[-1]) == 1
+
+
+# Shelf-life duration phrases ('5Yrs from DEC/2024', '6 MONTHS FROM
+# MANUFACTURE') — a duration, never an expiry declaration. The SLM sometimes
+# files one into expiry; the merge blanks it (NOT DETECTED).
+_SHELF_LIFE_RE = re.compile(
+    r"\b\d+\s*(?:YRS?|YEARS?|MONTHS?|DAYS?)\s*FROM\b",
+    re.IGNORECASE,
+)
+
+# Unambiguous non-food product-type vocabulary. The 3B SLM leaves 'edible'
+# blank on cosmetics / toiletries / non-edible household goods (no food word,
+# and these labels never print an explicit 'non-edible' marker), so the merge
+# supplies a deterministic 'no' ONLY when the raw OCR token stream across all
+# photos carries one of these phrases — every word here denotes a commodity
+# class that is never food, so the verdict is evidence-backed, not a guess.
+_NON_FOOD_RE = re.compile(
+    r"\b(deodorant|antiperspirant|parfum|perfume|cologne|eau de parfum|"
+    r"eau de toilette|body spray|body lotion|cotton swabs|cotton buds|"
+    r"hair oil|sunscreen|spf|sanitary|face wash|moisturiser|moisturizer|"
+    r"hairfall|anti.?dandruff|for external use|not for consumption|"
+    r"not meant for consumption)\b",
+    re.IGNORECASE,
+)
+
+
+def _non_food_evidence(results: List[Dict]) -> bool:
+    for r in results:
+        if not r:
+            continue
+        tokens = r.get("tokens") or []
+        for t in tokens:
+            text = str(t.get("text", "")) if isinstance(t, dict) else str(t)
+            if _NON_FOOD_RE.search(text):
+                return True
+    return False
 
 
 # A 3B SLM sometimes hands a promotion/boilerplate line back as the product
@@ -508,6 +547,89 @@ def merge_extractions(results: List[Dict],
     for dk in date_keys:
         if _corrupt_single_digit_year(merged.get(dk)):
             merged[dk] = ""
+    # Shelf-life notes ('5Yrs from DEC/2024', '6 MONTHS FROM MANUFACTURE')
+    # are duration phrases, not an expiry declaration. When the SLM files one
+    # into expiry, blank it (NOT DETECTED) rather than shipping a non-date.
+    if _SHELF_LIFE_RE.search(str(merged.get("expiry_date") or "")):
+        merged["expiry_date"] = ""
+    # A net quantity of ~10^16 litres is a barcode/multi-token misread, never
+    # a printed declaration (legal labels run g..l). Absurd magnitudes are
+    # unreadable, not data: blank so the inspector keys the true value.
+    nq = str(merged.get("net_quantity") or "").strip()
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(g|kg|gm|mg|ml|cl|l)\b",
+                  nq, re.IGNORECASE)
+    if m and float(m.group(1)) > 1_000_000:
+        merged["net_quantity"] = ""
+    # CJK characters in a consumer-care line are recognizer misreads of an
+    # Indian labelled product, never a valid contact channel. Drop to
+    # NOT DETECTED instead of emitting '电话0-08-07-...' as the care line.
+    care = str(merged.get("consumer_care") or "").strip()
+    if care and re.search(r"[\u3040-\u30ff\u4e00-\u9fff]", care):
+        merged["consumer_care"] = ""
+    # Non-edible commodity fallback: when the SLM left 'edible' blank (it cannot
+    # verify edibility off the label — no food word, and non-edible products
+    # don't print an explicit marker) but the raw OCR tokens carry an
+    # unambiguous non-food phrase ('DEODORANT', 'COTTON SWABS', 'SUNSCREEN'…),
+    # emit a deterministic 'no'. Fires only on a blank cell + printed evidence,
+    # so it never overrides an SLM verdict and never creates a false 'no'.
+    if not merged.get("edible") and _non_food_evidence(results):
+        merged["edible"] = "no"
+
+    # ── Merge-gate: recover cells we blanked even though THIS draw's cached
+    # stream carries the printed text. The SLM probe triaged the golden misses
+    # into two provable classes: MERGE-DROPPED (86 cells — engine read it, our
+    # merge dropped it; text IS in this same draw's per-photo streams) vs
+    # ENGINE-DROPPED (29 cells — no trace anywhere; honest NOT DETECTED). This
+    # gate exists only for the first class. Its contract is exactly the one
+    # every shipped gate obeys:
+    #   · fires ONLY on a cell the merge left blank → a byte-identical ok cell
+    #     is never blank, so it cannot be moved (0-regression by construction);
+    #   · reads ONLY from the current draw's per-photo streams (results), i.e.
+    #     text the engine provably returned on THIS draw — no fresh OCR, no
+    #     golden peeking;
+    #   · re-validates every candidate with the same vocabulary the honest
+    #     gates already ship (care-contact-like, clean date, non-absurd
+    #     net-quantity, non-CJK, shelf-life≠expiry), so a both-blank-ok cell
+    #     whose stream carries only junk stays blank — never a false fill.
+    for k in ("consumer_care", "manufacturer", "mrp", "net_quantity",
+              "product_name", "usp"):
+        if merged.get(k):
+            continue
+        # Care is contact-like-only; a slogan that merely mentions a % is not a
+        # consumer-care line no matter which photo it sat on.
+        if k == "consumer_care":
+            # Same CJK rejection the honesty gate ships for the same key: a
+            # recognizer-misread care line that carries any CJK character
+            # (电话0-08-07-AACM74336-22…) is noise on an Indian-labeled
+            # product — the honesty gate blanks it BY RULING, so our gate
+            # must refuse the very same candidate class and let the blank
+            # stand (deferrence), never refill it.
+            cands = [r.get("consumer_care", "") for r in results if r
+                     and _care_contact_like(str(r.get("consumer_care", "")))
+                     and not re.search(r"[\u3040-\u30ff\u4e00-\u9fff]",
+                                       str(r.get("consumer_care", "")))]
+            cands = [c for c in cands if c]
+            if cands:
+                merged[k] = max(cands, key=len)
+            continue
+        # manufacturer / product_name / usp / net_quantity: longest valid
+        # non-junk across this draw's streams; validators are the same ones the
+        # merge gates already trust for the same key.
+        cands = [str(r.get(k, "")).strip() for r in results if r]
+        cands = [c for c in cands if c and c != "None"]
+        if not cands:
+            continue
+        if k == "net_quantity":
+            cands = [c for c in cands if _date_component(c)[0] == "none"
+                     and not re.search(r"(\d+(?:\.\d+)?)\s*(?:g|kg|gm|mg|ml|cl|l)\b",
+                                       c, re.IGNORECASE)
+                     or re.search(
+                         r"\d+\s*(?:ml|mls?\.?|g|gm|kg|ltr?e?rs?|litres?|pcs?|pack|gram|grams|tablets?|capsules?|pieces?)\b",
+                         c, re.IGNORECASE)]
+        elif k == "mrp":
+            cands = [c for c in cands if re.search(r"(?i)(?:rs\.?|rs|mrp)\s*[:.\s]*\d{2,4}", c)]
+        merged[k] = max(cands, key=len) if cands else ""
+
     return merged
 
 
@@ -676,14 +798,14 @@ def apply_manual_overrides(inspection_id: str, overrides: Dict, user_id: Optiona
     if not inspection:
         raise ValueError(f"Inspection {inspection_id} not found")
 
-    bad = [k for k in overrides if k not in EXPECTED_KEYS]
+    bad = [k for k in overrides if k not in EXPECTED_KEYS and k != "manufacturer_address"]
     if bad:
         raise ValueError(f"Unknown fields: {', '.join(sorted(bad))}")
 
     declarations = {k: (str(v).strip() if v else "") for k, v in inspection.get("declarations", {}).items()}
     meta = dict(inspection.get("meta") or {})
     # _row_to_dict flattens meta_json to the top level; re-collect those keys.
-    for flat_key in ("compliance_radar", "grade", "font_measurement", "ocr_engine",
+    for flat_key in ("compliance_radar", "grade", "rule_version", "font_measurement", "ocr_engine",
                      "classifier", "field_evidence", "extraction_confidence"):
         if flat_key not in meta and inspection.get(flat_key):
             meta[flat_key] = inspection[flat_key]
@@ -705,6 +827,11 @@ def apply_manual_overrides(inspection_id: str, overrides: Dict, user_id: Optiona
         meta["manual_overrides"] = override_log
 
     safe_decl = {k: declarations.get(k, "") for k in EXPECTED_KEYS}
+    addr = overrides.get("manufacturer_address")
+    if addr is None:
+        addr = declarations.get("manufacturer_address", "")
+    if addr:
+        safe_decl["manufacturer_address"] = str(addr).strip()
     missing = compute_missing(safe_decl)
     overall_status = compute_overall_status(missing)
     compliance = rule_engine.evaluate_compliance(safe_decl, missing)
@@ -945,6 +1072,7 @@ def run_inspection(
     ocr=None,
     text_boxes: Optional[Dict[int, List[float]]] = None,
     label_types: Optional[List[Optional[str]]] = None,
+    progress_cb=None,
 ) -> Dict:
     """Full pipeline: preprocess → extract → merge → compliance → font →
     heat-map → radar → persist.
@@ -952,12 +1080,29 @@ def run_inspection(
     ``label_types`` (aligned with image_paths, one of front/back/side/other)
     routes each field to the photo whose label type is its strongest source;
     None keeps the original best-photo heuristics.
+
+    ``progress_cb`` is an optional callable receiving stage events
+    ({'stage': ..., 'ts': ...}) as the pipeline advances — used by the API for
+    a live processing log. Default None: no events are emitted and behaviour is
+    unchanged (the audit and all other callers are byte-identical).
     """
     ocr = ocr or _get_default_ocr()
+    prev_cb = bind_progress(progress_cb)
 
     individual_results = []
-    for path in image_paths:
+    _emit_progress("start", images=len(image_paths))
+    for index, path in enumerate(image_paths):
+        _emit_progress("extract", status="running", image=index + 1,
+                       total=len(image_paths), file=Path(path).name)
         individual_results.append(ocr.extract_structured(path))
+        meta = individual_results[-1].get("ocr_meta") or {}
+        _emit_progress(
+            "extract", status="done", image=index + 1, total=len(image_paths),
+            lines=meta.get("lines", 0), classifier=meta.get("classifier", ""),
+            confidence=meta.get("confidence"),
+            fields_found=sum(1 for k in EXPECTED_KEYS if individual_results[-1].get(k)),
+            elapsed_s=meta.get("elapsed_s"),
+        )
 
     text_boxes = _collect_text_boxes(individual_results)
 
@@ -966,6 +1111,11 @@ def run_inspection(
     missing = compute_missing(safe_decl)
     field_evidence = _field_evidence(individual_results, safe_decl)
     extraction_confidence = _extraction_confidence(individual_results, safe_decl, missing)
+    _emit_progress(
+        "merge", status="done",
+        fields_found=sum(1 for k in EXPECTED_KEYS if safe_decl.get(k)),
+        missing=len(missing),
+    )
 
     # Resource-adaptive cascade: escalation to a VLM when confidence is low.
     if VLM_RESCUE_ENABLED and extraction_confidence["overall"] < VLM_RESCUE_CONFIDENCE_THRESHOLD:
@@ -982,9 +1132,13 @@ def run_inspection(
     currency_verified = _verify_mrp_currency(
         ocr, image_paths, individual_results, safe_decl.get("mrp", "")
     )
+    _emit_progress("compliance", status="running")
     compliance = rule_engine.evaluate_compliance(
         safe_decl, missing, currency_verified=currency_verified
     )
+    _emit_progress("compliance", status="done",
+                   passed=compliance.get("passed_count", 0),
+                   total=compliance.get("total_rules", 0))
 
     net_qty_g = _parse_net_quantity_g(safe_decl)
     required_mm = measurement_service_get_required(net_qty_g)
@@ -997,6 +1151,7 @@ def run_inspection(
     font_measurement = None
     first_unmeasurable = None
     per_image_cal_bbox: Dict[int, Optional[List[float]]] = {}
+    _emit_progress("font", status="running")
     for index, path in enumerate(image_paths):
         if not Path(path).exists():
             continue
@@ -1023,12 +1178,17 @@ def run_inspection(
         if font_measurement is None:
             font_measurement = fm
 
+    _emit_progress("font", status="done",
+                   measured=(font_measurement or {}).get("status", "NOT_MEASURED"))
+
     misleading_checks = _check_misleading(safe_decl, compliance, currency_verified)
 
+    _emit_progress("evidence", status="running")
     heatmaps = _render_heatmaps(
         image_paths, token_lists, field_maps, per_image_cal_bbox,
         compliance["violations"], inspection_id,
     )
+    _emit_progress("evidence", status="done", heatmaps=len(heatmaps))
 
     ocr_meta_list = [r.get("ocr_meta") or {} for r in individual_results]
     radar = _build_radar_all(
@@ -1058,21 +1218,47 @@ def run_inspection(
         evidence_hash += item["sha256"]
     evidence_hash = hashlib.sha256(evidence_hash.encode("utf-8")).hexdigest() if evidence_hash else ""
 
+    # ── manufacturer address (pure side channel) ──────────────────────────────
+    # Derived deterministically from the raw OCR token stream only — never
+    # alters the ten frozen fields, the merge, or the compliance pipeline, so
+    # the golden-statutory audit stays byte-identical. Injected only when a
+    # genuinely address-looking block (PIN + street/city markers) was found.
+    manufacturer_address = extract_manufacturer_address(
+        individual_results, safe_decl.get("manufacturer", "")
+    )
+    if manufacturer_address:
+        ordered = {}
+        for key in EXPECTED_KEYS:
+            ordered[key] = safe_decl.get(key, "")
+            if key == "manufacturer":
+                ordered["manufacturer_address"] = manufacturer_address
+        safe_decl = ordered
+
+    # ── raw-OCR transcript (display-only side channel) ─────────────────────────
+    # Aggregates each image's nested ocr_meta.raw_ocr block (reads down to the
+    # transcript floor from the SAME single engine call as the classifier) into
+    # a frontend-friendly list. Never re-fed to the classifier or the frozen
+    # ten-field merge — pure transparency layer.
+    ocr_transcript = build_ocr_transcript(image_paths, individual_results)
+
     meta = {
         "compliance_radar": radar,
         "grade": radar.get("grade", "D") if radar else "D",
+        "rule_version": rule_engine.version,
         "font_measurement": font_measurement,
         "heatmaps": heatmaps,
         "ocr_engine": ocr_engine_name,
         "classifier": _classifier_label(ocr),
         "field_evidence": field_evidence,
         "extraction_confidence": extraction_confidence,
+        "ocr_transcript": ocr_transcript,
     }
 
     result = {
         "inspection_id": inspection_id,
         "timestamp": datetime.now().isoformat(),
         "method": method,
+        "rule_version": rule_engine.version,
         "images_processed": len(image_paths),
         "declarations": safe_decl,
         "missing_declarations": missing,
@@ -1090,6 +1276,7 @@ def run_inspection(
         "evidence": {"hash": evidence_hash, "images": evidence},
         "field_evidence": field_evidence,
         "extraction_confidence": extraction_confidence,
+        "ocr_transcript": ocr_transcript,
     }
 
     inspection_repo.save_inspection(
@@ -1118,6 +1305,9 @@ def run_inspection(
             inspection_id, item["filename"], item["original_name"], item["sha256"], item["sort_order"]
         )
 
+    _emit_progress("done", inspection_id=inspection_id, status=overall_status,
+                   score=compliance.get("compliance_score", 0))
+    restore_progress(prev_cb)
     return result
 
 

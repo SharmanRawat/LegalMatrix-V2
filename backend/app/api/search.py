@@ -19,6 +19,8 @@ def search(
     offset: int = Query(0, ge=0),
     user=Depends(require_roles("ADMIN", "INSPECTOR", "VIEWER")),
 ):
+    # Non-admins only see scans they created (own-user isolation).
+    user_id = None if user.get("role") == "ADMIN" else int(user.get("uid") or -1)
     return inspection_repo.search_inspections(
         q=q or None,
         status=status or None,
@@ -26,6 +28,7 @@ def search(
         manufacturer=manufacturer or None,
         date_from=date_from or None,
         date_to=date_to or None,
+        user_id=user_id,
         limit=limit,
         offset=offset,
     )

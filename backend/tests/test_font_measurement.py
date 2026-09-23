@@ -64,6 +64,45 @@ class TestCalibration:
         assert svc.calibrate(str(plain)) is None
 
 
+class TestExifCalibrationChain:
+    """EXIF (focal length + subject distance) is the third rung of the
+    calibration chain: no card, no barcode, but a phone camera EXIF block
+    present → calibrate resolves to exif, and measure never auto-verdicts."""
+
+    def _exif_image(self, tmp_path, width=4032, height=3024):
+        from PIL import Image
+        img = np.full((height, width, 3), 255, dtype=np.uint8)
+        exif = Image.Exif()
+        exif[0xA405] = 26          # FocalLengthIn35mmFilm = 26 mm
+        exif[0x920A] = (3, 10)     # SubjectDistance = 0.3 m
+        exif[0x9003] = "2026:09:23 10:00:00"
+        path = str(tmp_path / "exif.jpg")
+        Image.fromarray(img).save(path, exif=exif.tobytes())
+        return path
+
+    def test_calibrate_resolves_exif(self, tmp_path):
+        path = self._exif_image(tmp_path)
+        cal = FontMeasurementService().calibrate(path)
+        assert cal is not None
+        assert cal["calibration"] == "exif"
+        assert cal["ppm"] > 1
+        assert cal["uncertainty_factor"] == 0.20
+        assert cal["info"]["focal_35mm_equiv"] == 26.0
+
+    def test_measure_never_auto_verdicts_on_exif(self, tmp_path):
+        path = self._exif_image(tmp_path)
+        svc = FontMeasurementService()
+        # Provide explicit text components via token path so cap-height runs.
+        res = svc.measure_from_tokens(
+            path,
+            tokens=[{"text": "MRP Rs. 100", "box": [400, 100, 1000, 160]}],
+            required_mm=1.0,
+        )
+        assert res is not None
+        assert res["status"] == "REVIEW_REQUIRED"  # informational only
+        assert res["calibration"] == "exif"
+
+
 class TestExifMath:
     def test_ppm_physical_scale(self):
         # 50mm focal, 300mm distance, 4032px wide on a 35mm-equivalent sensor:

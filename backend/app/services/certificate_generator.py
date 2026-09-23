@@ -91,7 +91,7 @@ def build_certificate(result: Dict, verify_base_url: str = "") -> bytes:
     pdf.set_text_color(0, 0, 0)
     pdf.ln(8)
 
-    evidence_hash = ((result.get("evidence") or {}).get("hash")) or ""
+    evidence_hash = ((result.get("evidence") or {}).get("hash")) or result.get("evidence_hash", "")
     payload = f"{verify_base_url}{result.get('inspection_id', '')}|{evidence_hash}"
     qr_bytes = _build_qr_png(payload)
     qr_path = "/tmp/legalmatrix_cert_qr.png"
@@ -101,7 +101,7 @@ def build_certificate(result: Dict, verify_base_url: str = "") -> bytes:
         qr_path = f.name
 
     pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(0, 6, "Verify authenticity — scan the QR code.", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 6, "Verify authenticity - scan the QR code.", new_x="LMARGIN", new_y="NEXT")
     pdf.image(qr_path, x=pdf.w / 2 - 22, y=pdf.get_y() + 2, w=44)
     pdf.ln(14)
 

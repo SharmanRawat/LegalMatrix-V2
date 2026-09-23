@@ -3,22 +3,47 @@ import io
 import json
 import re
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional
 
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Query, Header
 from fastapi.responses import JSONResponse, StreamingResponse, Response, FileResponse
 from PIL import Image
 
 from app.config import get_evidence_dir
 from app.repositories import inspections as inspection_repo
 from app.services import inspection_service
+from app.services import progress as progress_store
 from app.services.auth_service import optional_auth, require_roles
 
 from fpdf import FPDF
 
 router = APIRouter()
+
+
+def _can_access_inspection(user: Optional[dict], inspection: dict) -> bool:
+    """Read scoping for stored inspections.
+
+    ADMIN sees every inspection. An authenticated non-admin (INSPECTOR /
+    VIEWER) sees only scans they created. Anonymous callers keep read access
+    so the no-login demo flow can still render the report / detail pages
+    after a run. All non-admin access checks are enforced per inspection.
+    """
+    if not user:
+        return True
+    if user.get("role") == "ADMIN":
+        return True
+    owner = inspection.get("user_id")
+    return owner is not None and int(owner) == int(user.get("uid") or -1)
+
+
+def _require_access(user: Optional[dict], inspection: dict) -> None:
+    if not _can_access_inspection(user, inspection):
+        raise HTTPException(
+            403, "You can only view or modify inspections you created"
+        )
 
 
 async def _save_uploads(images: List[UploadFile]) -> List[str]:
@@ -47,6 +72,7 @@ async def _save_uploads(images: List[UploadFile]) -> List[str]:
 async def inspect_package(
     images: List[UploadFile] = File(...),
     label_types: List[str] = Form(default=None),
+    x_progress_token: Optional[str] = Header(default=None),
     user=Depends(optional_auth),
 ):
     """Run a compliance inspection on 1-6 product label images and persist it.
@@ -56,6 +82,10 @@ async def inspect_package(
     declaration block, top = cap/roof face). When present, each field is routed
     to the photo whose label type is its strongest source; absent/unknown
     entries fall back to the original best-photo heuristics.
+
+    ``X-Progress-Token`` (optional) makes the pipeline's per-stage events
+    pollable at GET /api/inspect/progress/{token} while the synchronous
+    request is still in flight.
     """
     try:
         paths = await _save_uploads(images)
@@ -64,8 +94,20 @@ async def inspect_package(
         normalized = [t.lower() for t in label_types] if label_types else None
         print(f"[Inspect] Received {len(paths)} image(s) at {datetime.now().isoformat()}", flush=True)
         user_id = user.get("uid") if user else None
-        result = await run_in_thread(
-            inspection_service.run_inspection, paths, user_id, None, None, normalized)
+
+        if x_progress_token:
+            progress_store.create(x_progress_token)
+            progress_store.append(x_progress_token, {"stage": "upload", "ts": time.time()})
+
+        def _run():
+            cb = None
+            if x_progress_token:
+                def cb(payload):
+                    progress_store.append(x_progress_token, payload)
+            return inspection_service.run_inspection(
+                paths, user_id, None, None, normalized, progress_cb=cb)
+
+        result = await run_in_thread(_run)
         return JSONResponse(content=result)
     except HTTPException:
         raise
@@ -77,6 +119,17 @@ async def inspect_package(
             content=json.dumps({"status": "ERROR", "message": str(e)}),
             media_type="application/json",
         )
+
+
+@router.get("/inspect/progress/{token}")
+async def get_inspection_progress(token: str):
+    """Live per-stage progress for a running /api/inspect request (polled by
+    the UI). Returns any events emitted so far; the final 'done' event carries
+    the inspection_id."""
+    events = progress_store.get(token)
+    if events is None:
+        return JSONResponse({"events": [], "running": False})
+    return JSONResponse({"events": events, "running": True})
 
 
 async def run_in_thread(func, *args):
@@ -118,11 +171,84 @@ async def generate_report(
         raise HTTPException(500, f"Report generation failed: {e}")
 
 
+@router.get("/inspect/{inspection_id}/report")
+async def stored_inspection_report(
+    inspection_id: str,
+    user=Depends(optional_auth),
+):
+    """PDF report built from the STORED inspection row (fast, includes manual
+    overrides). This is the post-correction report: it renders the saved
+    corrected declarations instead of re-running OCR from scratch."""
+    inspection = inspection_repo.get_inspection(inspection_id)
+    if not inspection:
+        raise HTTPException(404, f"Inspection {inspection_id} not found")
+    _require_access(user, inspection)
+    inspection["status"] = inspection.get("status") or "REVIEW_REQUIRED"
+    # Stored rows keep the hash in a column and photos in `images`; rebuild the
+    # `evidence` dict the PDF builder expects.
+    inspection.setdefault("evidence", {}).update({
+        "hash": inspection.get("evidence_hash", ""),
+        "images": inspection.get("images", []),
+    })
+    try:
+        pdf_bytes = await run_in_thread(_build_pdf, inspection)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Report generation failed: {e}")
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename=LegalMatrix-Report-{inspection_id}.pdf"
+        },
+    )
+
+
+@router.get("/inspect/verify")
+def verify_inspection(
+    inspection_id: str,
+    hash: Optional[str] = Query(None, description="Expected evidence SHA-256 from the certificate QR"),
+    user=Depends(optional_auth),
+):
+    """Tamper-evident verification: a certificate QR encodes
+    ``<inspection_id>|<evidence_hash>``. This endpoint confirms the
+    inspection exists and whether the stored evidence hash matches."""
+    # A QR payload arrives as "id|hash" in one param — split first so the
+    # lookup uses the bare inspection id.
+    id_part = inspection_id
+    hash_part = hash
+    if "|" in inspection_id:
+        id_part, maybe_hash = inspection_id.split("|", 1)
+        if not hash_part and maybe_hash:
+            hash_part = maybe_hash
+    inspection = inspection_repo.get_inspection(id_part)
+    if not inspection:
+        raise HTTPException(404, "Certificate not found")
+    stored_hash = (
+        ((inspection.get("evidence") or {}).get("hash"))
+        or inspection.get("evidence_hash")
+        or ""
+    )
+    return {
+        "found": True,
+        "inspection_id": id_part,
+        "product_name": inspection.get("product_name"),
+        "manufacturer": inspection.get("manufacturer"),
+        "status": inspection.get("status"),
+        "compliance_score": inspection.get("compliance_score"),
+        "created_at": inspection.get("created_at"),
+        "evidence_hash": stored_hash,
+        "hash_match": bool(hash_part) and stored_hash == hash_part,
+    }
+
+
 @router.get("/inspect/{inspection_id}")
 async def get_inspection(inspection_id: str, user=Depends(optional_auth)):
     inspection = inspection_repo.get_inspection(inspection_id)
     if not inspection:
         raise HTTPException(404, f"Inspection {inspection_id} not found")
+    _require_access(user, inspection)
     return inspection
 
 
@@ -139,6 +265,10 @@ async def override_inspection(
     overrides = payload.get("overrides") or payload
     if not isinstance(overrides, dict) or not overrides:
         raise HTTPException(400, "Provide 'overrides' as a JSON object of field -> corrected value")
+    inspection = inspection_repo.get_inspection(inspection_id)
+    if not inspection:
+        raise HTTPException(404, f"Inspection {inspection_id} not found")
+    _require_access(user, inspection)
     try:
         updated = await run_in_thread(
             inspection_service.apply_manual_overrides, inspection_id, overrides, user_id
@@ -158,6 +288,7 @@ async def get_evidence_image(
     inspection = inspection_repo.get_inspection(inspection_id)
     if not inspection:
         raise HTTPException(404, "Inspection not found")
+    _require_access(user, inspection)
     images = inspection.get("images", [])
     if not 0 <= index < len(images):
         raise HTTPException(404, "Evidence image not found")
@@ -191,6 +322,7 @@ async def get_heatmap(
     inspection = inspection_repo.get_inspection(inspection_id)
     if not inspection:
         raise HTTPException(404, "Inspection not found")
+    _require_access(user, inspection)
     heatmap = next((h for h in inspection.get("heatmaps", []) if h.get("image_index") == index), None)
     if not heatmap:
         raise HTTPException(404, "Heat-map not found")
@@ -206,8 +338,12 @@ async def get_certificate(
     inspection = inspection_repo.get_inspection(inspection_id)
     if not inspection:
         raise HTTPException(404, "Inspection not found")
+    _require_access(user, inspection)
     from app.services.certificate_generator import build_certificate
-    pdf_bytes = await run_in_thread(build_certificate, inspection, "/inspect/verify?inspection_id=")
+    from app.config import FRONTEND_URL
+    pdf_bytes = await run_in_thread(
+        build_certificate, inspection, f"{FRONTEND_URL}/verify?inspection_id="
+    )
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
@@ -224,7 +360,12 @@ async def list_inspections(
     limit: int = 50,
     user=Depends(require_roles("ADMIN", "INSPECTOR", "VIEWER")),
 ):
-    return inspection_repo.list_inspections(limit=min(limit, 200))
+    """History list. ADMIN sees every inspection; INSPECTOR / VIEWER only see
+    scans they created (own-user isolation)."""
+    limit = min(limit, 200)
+    if user.get("role") == "ADMIN":
+        return inspection_repo.list_inspections(limit=limit)
+    return inspection_repo.list_inspections_by_user(int(user.get("uid") or -1), limit=limit)
 
 
 @router.get("/inspect/{inspection_id}/export")
@@ -237,6 +378,7 @@ async def export_inspection(
     inspection = inspection_repo.get_inspection(inspection_id)
     if not inspection:
         raise HTTPException(404, "Inspection not found")
+    _require_access(user, inspection)
 
     if format == "json":
         return JSONResponse(
@@ -249,6 +391,9 @@ async def export_inspection(
         buf = io.StringIO()
         writer = csv.writer(buf)
         writer.writerow(["field", "value", "declared", "rule_no", "severity"])
+        writer.writerow(["rule_version",
+                         str(inspection.get("rule_version") or inspection.get("meta", {}).get("rule_version", "n/a")),
+                         "YES", "", ""])
         declarations = inspection.get("declarations", {})
         for key, value in declarations.items():
             writer.writerow([key, value, "YES" if value else "NO", "", ""])
@@ -266,6 +411,23 @@ async def export_inspection(
         )
 
     raise HTTPException(400, "format must be 'json' or 'csv'")
+
+
+@router.delete("/inspect/{inspection_id}")
+async def delete_inspection(
+    inspection_id: str,
+    user=Depends(require_roles("ADMIN")),
+):
+    """Administratively delete a stored inspection (admin-only).
+
+    Removes the inspection row and its image rows (CASCADE). Evidence files on
+    disk are content-addressed (sha256 filenames) and may be shared across
+    inspections, so they are intentionally retained.
+    """
+    deleted = inspection_repo.delete_inspection(inspection_id)
+    if not deleted:
+        raise HTTPException(404, "Inspection not found")
+    return {"deleted": True, "inspection_id": inspection_id}
 
 
 # ── PDF generation ─────────────────────────────────────────────────────────
@@ -426,14 +588,14 @@ def _build_pdf(result: Dict) -> bytes:
         ts_disp = datetime.fromisoformat(ts).strftime("%d %b %Y, %I:%M %p")
     except (TypeError, ValueError):
         ts_disp = str(ts)
-    engine = meta.get("ocr_engine") or OCR_ENGINE
-    classifier = meta.get("classifier") or FIELD_CLASSIFIER_MODEL
+    engine = meta.get("ocr_engine") or result.get("ocr_engine") or OCR_ENGINE
+    classifier = meta.get("classifier") or result.get("classifier") or FIELD_CLASSIFIER_MODEL
     half = usable / 2
     meta_rows = [
         ("Inspection ID", str(result.get("inspection_id", "-")), "Date & Time", ts_disp),
         ("Images Processed", str(result.get("images_processed", "-")), "Method", str(result.get("method", "-"))),
         ("OCR Engine", f"{engine} (lang {OCR_LANG})", "Classifier", str(classifier)),
-        ("Evidence SHA-256", (evidence.get("hash", "n/a") or "n/a")[:20], "Grade", str(result.get("grade", "-"))),
+        ("Evidence SHA-256", (evidence.get("hash", "n/a") or "n/a")[:20], "Rules Version", str(result.get("rule_version", "n/a"))),
     ]
     for k1, v1, k2, v2 in meta_rows:
         y0 = pdf.get_y()
@@ -464,12 +626,15 @@ def _build_pdf(result: Dict) -> bytes:
     field_labels = {
         "mrp": "MRP", "usp": "Unit Sale Price", "net_quantity": "Net Quantity",
         "product_name": "Product Name", "manufacturer": "Manufacturer",
+        "manufacturer_address": "Manufacturer Address",
         "manufacturing_date": "Mfg Date", "expiry_date": "Expiry Date",
         "consumer_care": "Consumer Care", "dimensions": "Dimensions",
     }
     declarations = result.get("declarations", {})
     field_evidence = result.get("field_evidence", {})
-    overrides = meta.get("manual_overrides") or {}
+    # manual_overrides sits at meta level on a fresh run, but _row_to_dict
+    # flattens meta_json to the top level on a stored row — accept both.
+    overrides = meta.get("manual_overrides") or result.get("manual_overrides") or {}
     widths = [30, 58, 72, 26]
     status_chip = {
         "OK": (22, 163, 74), "OVERRIDDEN": (217, 119, 6), "NOT DETECTED": (185, 28, 28),

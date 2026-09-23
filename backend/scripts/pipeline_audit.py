@@ -128,10 +128,22 @@ class CachedSmartOCR(SmartOCRService):
         key = "ocr|" + _fstat_key(image_path)
         hit = self._ocr_cache.get(key)
         if hit is not None:
-            return hit
+            return hit if not isinstance(hit, dict) else hit.get("tokens", [])
         out = super()._ocr_tokens(image_path)
         self._ocr_cache.set(key, out)
         return out
+
+    def _ocr_tokens_with_raw(self, image_path: str):
+        key = "ocr|" + _fstat_key(image_path)
+        hit = self._ocr_cache.get(key)
+        if hit is not None:
+            if isinstance(hit, dict) and "tokens" in hit:
+                return hit["tokens"], hit.get("raw", hit["tokens"])
+            # Legacy cache entry: a plain token list (no transcript data).
+            return hit, hit
+        out, raw = super()._ocr_tokens_with_raw(image_path)
+        self._ocr_cache.set(key, {"tokens": out, "raw": raw})
+        return out, raw
 
     def _ocr_variant_tokens(self, image_path: str):
         key = "var|" + _fstat_key(image_path)
@@ -173,7 +185,7 @@ def _oracle_read(path: str, model: str, cache: DiskCache):
 # each photo's label type, which routes fields to their strongest source.
 _EMBED_LABEL = {
     "front": "front", "back": "back", "side": "side",
-    "other": "other", "top": "top",
+    "other": "other", "top": "top", "bottom": "other",
 }
 LABEL_MANIFEST_PATH = Path(__file__).resolve().parent.parent / "data" / "label_types.json"
 
@@ -192,7 +204,7 @@ def _label_type_for(path: str, manifest: dict):
     name = Path(path).name
     if name in manifest:
         return manifest[name]
-    m = re.match(r"image\d+_([A-Za-z0-9]+)\.jpg$", name, re.IGNORECASE)
+    m = re.match(r"(?:image|product)\d+_([A-Za-z0-9]+)\.jpg$", name, re.IGNORECASE)
     if m:
         return _EMBED_LABEL.get(m.group(1).lower())
     return None
@@ -582,13 +594,25 @@ def triage_field(field: str, status: str, pv: str, ov: str) -> tuple:
 # ── image grouping (ignore *.enhanced artifacts) ────────────────────────────
 def _group_images(images_dir: Path) -> dict:
     groups = defaultdict(list)
+    # Legacy + label-type-embedded naming: image1_1.jpg / image1_front.jpg.
     for p in sorted(images_dir.glob("image*.jpg")):
-        # Matches both naming schemes: image1_1.jpg (legacy) and
-        # image1_front.jpg (label-type-embedded).
         m = re.fullmatch(r"image(\d+)_[A-Za-z0-9]+", p.stem)
         if m:
             groups[m.group(1)].append(str(p))
-    return dict(sorted(groups.items(), key=lambda x: int(x[0])))
+    # New-images naming: product1_front.jpg etc. → prefix "productN" (kept
+    # distinct from the numeric image ids so golden keys never collide).
+    for p in sorted(images_dir.glob("product*.jpg")):
+        m = re.fullmatch(r"product(\d+)_[A-Za-z0-9]+", p.stem, re.IGNORECASE)
+        if m:
+            groups[f"product{m.group(1)}"].append(str(p))
+
+    def _sort_key(item):
+        key = item[0]
+        if key.isdigit():
+            return (0, int(key), "")
+        return (1, int(re.sub(r"\D", "", key) or 0), key)
+
+    return dict(sorted(groups.items(), key=_sort_key))
 
 
 def _fmt(v: str, limit: int = 40) -> str:

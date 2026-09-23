@@ -12,10 +12,11 @@ Calibration chain (in priority order):
 When no reference is available we decline to fabricate a measurement.
 """
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import cv2
 import numpy as np
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,16 @@ CARD_ANGLE_TOLERANCE_DEG = 18.0
 CARD_UNCERTAINTY = 0.06
 BARCODE_WIDTH_MM = 20.0
 BARCODE_UNCERTAINTY = 0.15
+
+EXIF_UNCERTAINTY = 0.20
+EXIF_MIN_PPM = 1.0
+EXIF_MAX_PPM = 300.0
+SENSOR_WIDTH_35MM = 36.0
+
+_EXIF_EXIF_IFD = 0x8769
+_EXIF_FOCAL_LEN = 0x9205
+_EXIF_SUBJECT_DISTANCE = 0x920A
+_EXIF_FOCAL_35MM = 0xA405
 
 
 def _order_points(pts: np.ndarray) -> np.ndarray:
@@ -197,6 +208,83 @@ def compute_ppm_from_barcode(image: np.ndarray) -> Optional[Tuple[float, Tuple[f
         return None
 
 
+def _ppm_from_focal(focal_35: float, distance_m: float, image_width: int) -> Optional[float]:
+    if not focal_35 or focal_35 <= 0 or not distance_m or distance_m <= 0:
+        return None
+    focal_35 = float(focal_35)
+    dist_mm = float(distance_m) * 1000.0
+    half_angle = np.arctan((SENSOR_WIDTH_35MM / 2.0) / focal_35)
+    width_at_plane_mm = 2.0 * dist_mm * np.tan(half_angle)
+    if width_at_plane_mm <= 0:
+        return None
+    ppm = image_width / width_at_plane_mm
+    return float(ppm) if ppm > 0 else None
+
+
+def _exif_to_float(value: Union[int, float, Tuple, None]) -> Optional[float]:
+    """Coerce an EXIF numeric value to float.
+
+    RATIONAL EXIF tags (subject distance, focal length) are decoded by Pillow
+    as (numerator, denominator) pairs; some encoders write them as plain
+    scalars. Handle both instead of calling float() on a tuple.
+    """
+    if value is None:
+        return None
+    if isinstance(value, tuple) and len(value) >= 2:
+        num, den = float(value[0]), float(value[1])
+        if den == 0 or num == 0:
+            return None
+        return num / den
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _exif_calibration_with_reason(image_path: str):
+    try:
+        with Image.open(image_path) as pil:
+            if pil is None:
+                return None, "image_unreadable"
+            exif = pil.getexif()
+        if not exif:
+            return None, "exif_tags_missing"
+
+        sub_ifd = exif.get_ifd(_EXIF_EXIF_IFD) or {}
+
+        f35 = sub_ifd.get(_EXIF_FOCAL_35MM) or exif.get(_EXIF_FOCAL_35MM)
+        if not f35:
+            f35 = sub_ifd.get(_EXIF_FOCAL_LEN) or exif.get(_EXIF_FOCAL_LEN)
+        f35 = _exif_to_float(f35)
+        if f35 is None or f35 <= 0:
+            return None, "exif_focal_length_missing"
+
+        dist_m = sub_ifd.get(_EXIF_SUBJECT_DISTANCE) or exif.get(_EXIF_SUBJECT_DISTANCE)
+        dist_m = _exif_to_float(dist_m)
+        if dist_m is None or dist_m <= 0:
+            return None, "exif_subject_distance_missing"
+
+        img = cv2.imread(image_path)
+        if img is None:
+            return None, "image_unreadable"
+        h, w = img.shape[:2]
+        ppm = _ppm_from_focal(f35, dist_m, w)
+        if ppm is None or not (EXIF_MIN_PPM <= ppm <= EXIF_MAX_PPM):
+            logger.warning(f"EXIF calibration implausible (ppm={ppm}) — declining estimate for {image_path}")
+            return None, f"exif_implausible(ppm={None if ppm is None else round(ppm, 2)})"
+        info = {
+            "focal_35mm_equiv": round(f35, 2),
+            "subject_distance_m": round(dist_m, 2),
+            "horizontal_fov_deg": round(
+                float(np.degrees(2.0 * np.arctan((SENSOR_WIDTH_35MM / 2.0) / f35))), 2
+            ),
+        }
+        return (ppm, info), None
+    except Exception as e:
+        logger.error(f"EXIF calibration failed: {e}")
+        return None, "exif_parse_error"
+
+
 class ScaleCalibrator:
     """Resolves a pixels-per-mm reference from the calibration chain."""
 
@@ -228,8 +316,16 @@ class ScaleCalibrator:
                     "bbox": bbox,
                 }
 
-        if mode == "exif":
-            return None
+        if mode in ("auto", "exif"):
+            exif_result, _reason = _exif_calibration_with_reason(image_path)
+            if exif_result:
+                ppm, info = exif_result
+                return {
+                    "calibration": "exif",
+                    "ppm": float(ppm),
+                    "uncertainty_factor": EXIF_UNCERTAINTY,
+                    "info": info,
+                }
 
         return None
 
@@ -243,6 +339,8 @@ def calibration_rejected_reason(image_path: str, mode: str = "auto") -> str:
         reasons.append("credit_card_not_detected")
     if mode in ("auto", "barcode") and compute_ppm_from_barcode(img) is None:
         reasons.append("barcode_not_detected")
-    if mode in ("auto", "credit_card", "barcode"):
-        reasons.append("exif_unavailable")
+    if mode in ("auto", "exif"):
+        _exif, exif_reason = _exif_calibration_with_reason(image_path)
+        if _exif is None and exif_reason:
+            reasons.append(exif_reason)
     return "; ".join(dict.fromkeys(reasons)) or "calibration_failed"

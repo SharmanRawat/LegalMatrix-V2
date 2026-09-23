@@ -108,6 +108,19 @@ def test_manufacturer_leading_fssai_stripped():
     assert _strip_company("fssai Patanjali Foods Linmited") == "Patanjali Foods Linmited"
 
 
+def test_manufacturer_glued_suffix_split():
+    """'Swabs () Ltd.' loses its parenthetical to the trailer-trim, gluing into
+    'SwabsLtd.'; the suffix split must restore 'Swabs Ltd.' so token matching
+    vs 'Swabs (I) Ltd. / Suparshva Swabs (I) Ltd.' can succeed."""
+    from app.services.field_classifier import _strip_company
+    assert _strip_company("Suparshva SwabsLtd.") == "Suparshva Swabs Ltd"
+    # already clean values are untouched
+    assert _strip_company("ABC FOODS LIMITED") == "ABC FOODS LIMITED"
+    assert _strip_company("Barony Universal Products Ltd") == "Barony Universal Products Ltd"
+    # glued multi-suffix: Pvt + Ltd
+    assert _strip_company("NirmaPvtLtd") == "Nirma Pvt Ltd"
+
+
 def test_zero_net_quantity_from_nutrition_rows_rejected():
     """image6_3: bare '0g' nutrition rows must never become the net quantity."""
     rc = RegexFieldClassifier()

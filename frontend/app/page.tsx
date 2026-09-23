@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
   Camera, Upload, Shield, CheckCircle, AlertCircle,
-  Clock, X, Download, Scan, AlertTriangle, Pencil, Save,
+  Clock, X, Download, Scan, AlertTriangle, Pencil, Save, FileText,
 } from 'lucide-react'
 import toast, { Toaster } from 'react-hot-toast'
 import Navbar from '@/app/components/Navbar'
@@ -55,6 +55,7 @@ interface InspectionResult {
     net_quantity: string | null
     product_name: string | null
     manufacturer: string | null
+    manufacturer_address?: string | null
     manufacturing_date: string | null
     expiry_date: string | null
     consumer_care: string | null
@@ -74,6 +75,14 @@ interface InspectionResult {
   total_rules: number
   violations: Violation[]
   misleading_checks?: MisleadingCheck[]
+  /** Display-only raw-OCR transcript: per-image reads (incl. low-confidence)
+   * surfaced for transparency. Never feeds field extraction. */
+  ocr_transcript?: Array<{
+    filename: string
+    count: number
+    low_conf: number
+    text: string
+  }>
   font_measurement?: {
     status: string
     measured_mm: number | null
@@ -96,6 +105,31 @@ interface InspectionResult {
   message?: string
 }
 
+/** One emitted stage event from the live pipeline log (POST /api/inspect with
+ * an X-Progress-Token, polled at GET /api/inspect/progress/{token}). */
+interface ProgressEvent {
+  stage: 'upload' | 'start' | 'extract' | 'ocr' | 'slm' | 'merge' |
+          'compliance' | 'font' | 'evidence' | 'done' | string
+  status?: string
+  ts?: number
+  images?: number
+  image?: number | string
+  total?: number
+  file?: string
+  lines?: number
+  fields_found?: number
+  classifier?: string
+  confidence?: number
+  missing?: number
+  passed?: number
+  total_rules?: number
+  measured?: string
+  heatmaps?: number
+  inspection_id?: string
+  score?: number
+  reason?: string
+}
+
 export default function Home() {
   const { t, tStatus } = useI18n()
   const [selectedImages, setSelectedImages] = useState<File[]>([])
@@ -105,6 +139,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [result, setResult] = useState<InspectionResult | null>(null)
+  const [progressEvents, setProgressEvents] = useState<ProgressEvent[]>([])
   const [downloadingPdf, setDownloadingPdf] = useState(false)
   const [downloadingCert, setDownloadingCert] = useState(false)
   const [heatmapUrls, setHeatmapUrls] = useState<string[]>([])
@@ -117,6 +152,7 @@ export default function Home() {
   const user: SessionUser | null = getUser()
   const canEdit = !!user && (user.role === 'ADMIN' || user.role === 'INSPECTOR')
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const progressPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -132,6 +168,7 @@ export default function Home() {
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current)
+      if (progressPollRef.current) clearInterval(progressPollRef.current)
       stopCamera()
     }
   }, [])
@@ -268,16 +305,38 @@ export default function Home() {
     setEditing({})
     setSavingFields({})
     setElapsed(0)
+    setProgressEvents([])
 
     if (timerRef.current) clearInterval(timerRef.current)
     timerRef.current = setInterval(() => setElapsed(s => s + 1), 1000)
+
+    // Live pipeline log: tag the POST with a pollable progress token and
+    // stream its OCR → SLM → rules → evidence stages into the UI.
+    const progressToken =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `lm-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+
+    if (progressPollRef.current) clearInterval(progressPollRef.current)
+    progressPollRef.current = setInterval(async () => {
+      try {
+        const resp = await api.get(`/api/inspect/progress/${progressToken}`, { timeout: 15000 })
+        const events = (resp.data?.events as ProgressEvent[] | undefined) ?? []
+        if (events.length) setProgressEvents(events)
+      } catch {
+        // transient poll error — the next tick retries
+      }
+    }, 1500)
 
     const formData = new FormData()
     selectedImages.forEach(image => formData.append('images', image))
     imageTypes.forEach(type => formData.append('label_types', type))
 
     try {
-      const response = await api.post('/api/inspect', formData, { timeout: 600000 })
+      const response = await api.post('/api/inspect', formData, {
+        timeout: 600000,
+        headers: { 'X-Progress-Token': progressToken },
+      })
       setResult(response.data)
       toast.success(t('Inspection completed!'))
       if (response.data?.inspection_id && response.data?.heatmaps?.length) {
@@ -305,6 +364,7 @@ export default function Home() {
       toast.error(msg)
     } finally {
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+      if (progressPollRef.current) { clearInterval(progressPollRef.current); progressPollRef.current = null }
       setLoading(false)
     }
   }
@@ -372,24 +432,13 @@ export default function Home() {
   }
 
   const handleDownloadPdf = async () => {
-    if (!result || selectedImages.length === 0) return
+    if (!result) return
     setDownloadingPdf(true)
-    const formData = new FormData()
-    selectedImages.forEach(image => formData.append('images', image))
-    imageTypes.forEach(type => formData.append('label_types', type))
     try {
-      const resp = await api.post('/api/inspect/report', formData, {
-        responseType: 'blob',
-        timeout: 600000,
-      })
-      const url = window.URL.createObjectURL(new Blob([resp.data]))
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `LegalMatrix-Report-${result.inspection_id}.pdf`
-      document.body.appendChild(a)
-      a.click()
-      window.URL.revokeObjectURL(url)
-      a.remove()
+      await downloadBlob(
+        `/api/inspect/${result.inspection_id}/report`,
+        `LegalMatrix-Report-${result.inspection_id}.pdf`,
+      )
       toast.success(t('PDF report downloaded!'))
     } catch (err) {
       console.error('PDF download failed:', err)
@@ -422,6 +471,7 @@ export default function Home() {
     net_quantity: t('Net Quantity'),
     product_name: t('Product Name'),
     manufacturer: t('Manufacturer'),
+    manufacturer_address: t('Manufacturer Address'),
     manufacturing_date: t('Manufacturing Date'),
     expiry_date: t('Expiry Date'),
     consumer_care: t('Consumer Care'),
@@ -465,6 +515,49 @@ export default function Home() {
   const score = result?.compliance_score ?? 0
   const circumference = 2 * Math.PI * 45
   const dashoffset = circumference - (score / 100) * circumference
+
+  // Live pipeline log — human-readable text for each emitted stage event.
+  const stageText = (e: ProgressEvent): string => {
+    switch (e.stage) {
+      case 'upload':
+        return 'Images received — starting pipeline…'
+      case 'start':
+        return `Pipeline started — ${e.images ?? 0} image(s) queued`
+      case 'ocr':
+        if (e.status === 'running') return `OCR — scanning text blocks on ${e.image ?? ''}…`
+        if (e.status === 'multi_pass') return `OCR — re-scanning degraded digits (${e.lines ?? 0} blocks)`
+        return `OCR — read ${e.lines ?? 0} text blocks on ${e.image ?? ''}`
+      case 'slm':
+        if (e.status === 'running') return 'SLM classifier — mapping text to 10 legal fields…'
+        if (e.status === 'regex_fallback') return 'SLM unavailable — regex fallback used'
+        return `SLM classifier — fields mapped (${e.classifier ?? 'llm+regex'})`
+      case 'extract':
+        if (e.status === 'running') return `Image ${e.image}/${e.total} — extracting (${e.file ?? ''})…`
+        return `Image ${e.image}/${e.total} — OCR ${e.lines ?? 0} blocks · SLM ${e.fields_found ?? 0}/10 fields (${e.classifier ?? ''})`
+      case 'merge':
+        return `Merged ${e.fields_found ?? 0}/10 fields · ${e.missing ?? 0} missing`
+      case 'compliance':
+        if (e.status === 'running') return 'Applying legal-metrology rule engine…'
+        return `Rule engine — ${e.passed ?? 0}/${e.total_rules ?? 0} rules passed`
+      case 'font':
+        if (e.status === 'running') return 'Measuring font height vs the legal minimum…'
+        return `Font measurement — ${e.measured ?? 'done'}`
+      case 'evidence':
+        if (e.status === 'running') return 'Rendering heat-maps & storing evidence…'
+        return `Evidence — ${e.heatmaps ?? 0} heat-map(s) rendered`
+      case 'done':
+        return `Complete — ${e.inspection_id ?? ''} · ${e.status ?? ''} · score ${e.score ?? 0}%`
+      default:
+        return e.stage
+    }
+  }
+
+  const statusDot = (e: ProgressEvent): string => {
+    if (e.stage === 'done' || e.status === 'done') return 'bg-green-500'
+    if (e.status === 'running') return 'bg-blue-500 animate-pulse'
+    if (e.status === 'regex_fallback') return 'bg-amber-500'
+    return 'bg-gray-300'
+  }
 
   // Per-label-type bookkeeping over the flat image list (order = append order).
   const counts: Record<LabelType, number> = { front: 0, back: 0, side: 0, top: 0, other: 0 }
@@ -607,9 +700,31 @@ export default function Home() {
         </div>
 
         {loading && (
-          <p className="text-xs text-gray-500 mt-3">
-            {t('Vision-model inspection typically takes 1-3 min per image. The request is in flight.')}
-          </p>
+          <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50/60 p-4">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <p className="text-xs font-semibold text-blue-700 flex items-center gap-2">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-600" />
+                </span>
+                {t('Live pipeline')} — OCR → SLM → rules
+              </p>
+              <span className="text-[10px] text-blue-500 font-mono whitespace-nowrap">
+                {progressEvents.length} {t('events')} · {elapsed}s
+              </span>
+            </div>
+            <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
+              {progressEvents.length === 0 && (
+                <p className="text-[11px] text-blue-600/70">{t('Uploading images…')}</p>
+              )}
+              {progressEvents.slice(-10).map((e, i) => (
+                <div key={i} className="flex items-start gap-2 text-[11px] text-gray-700">
+                  <span className={`mt-1.5 h-1.5 w-1.5 rounded-full shrink-0 ${statusDot(e)}`} />
+                  <span className="leading-snug">{stageText(e)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
 
         {/* Same-product confirmation */}
@@ -858,6 +973,50 @@ export default function Home() {
               {t('for evidence photos, heat-maps and exports.')}
             </p>
           </div>
+
+          {/* Raw-OCR transcript (display-only transparency side channel) */}
+          {result.ocr_transcript != null && result.ocr_transcript.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+              <details className="group">
+                <summary className="flex items-center justify-between cursor-pointer list-none">
+                  <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+                    <FileText className="w-5 h-5 text-gray-400" />
+                    {t('Raw label text (OCR transcript)')}
+                  </h3>
+                  <span className="text-xs text-gray-500">
+                    {t('{n} text regions', {
+                      n: result.ocr_transcript.reduce((s, e) => s + e.count, 0),
+                    })}
+                  </span>
+                </summary>
+                <div className="mt-3 space-y-3">
+                  {result.ocr_transcript.map((entry) => (
+                    <div key={entry.filename} className="bg-gray-50 rounded-lg p-3">
+                      <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
+                        <span className="font-mono text-xs font-semibold text-gray-600">
+                          {entry.filename}
+                        </span>
+                        <span className="text-[11px] text-gray-400">
+                          {t('{count} regions', { count: entry.count })}
+                          {entry.low_conf > 0 && (
+                            <span className="text-amber-600">
+                              {' '}· +{entry.low_conf} {t('low-confidence')}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                      <pre className="text-xs text-gray-700 whitespace-pre-wrap break-words font-mono leading-relaxed max-h-56 overflow-y-auto">
+                        {entry.text || t('No text detected')}
+                      </pre>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-3 text-[11px] text-gray-400">
+                  {t('Shown for transparency — this raw text is never used to fill declarations.')}
+                </p>
+              </details>
+            </div>
+          )}
 
           {/* Rule Violations */}
           {result.violations && result.violations.length > 0 && (

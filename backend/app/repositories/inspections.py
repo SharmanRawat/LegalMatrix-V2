@@ -145,6 +145,36 @@ def list_inspections(limit: int = 100, db_path=None):
         conn.close()
 
 
+def list_inspections_by_user(user_id: int, limit: int = 100, db_path=None):
+    """All inspections run by a given user (for the admin user-audit view)."""
+    conn = get_connection(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT * FROM inspections WHERE user_id = ? "
+            "ORDER BY created_at DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def delete_inspection(inspection_id: str, db_path=None) -> bool:
+    """Administratively delete a stored inspection and its image rows.
+
+    Returns True if a row was removed, False if the id did not exist.
+    Evidence files on disk are left in place: they are content-addressed
+    (sha256-derived filenames) and may be shared with other inspections.
+    """
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            cur = conn.execute("DELETE FROM inspections WHERE id = ?", (inspection_id,))
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
 def search_inspections(
     q: str = None,
     status: str = None,
@@ -152,12 +182,16 @@ def search_inspections(
     manufacturer: str = None,
     date_from: str = None,
     date_to: str = None,
+    user_id: int = None,
     limit: int = 100,
     offset: int = 0,
     db_path=None,
 ):
     clauses, params = [], []
 
+    if user_id is not None:
+        clauses.append("user_id = ?")
+        params.append(user_id)
     if q:
         clauses.append(
             "(id LIKE ? OR product_name LIKE ? OR manufacturer LIKE ? "
@@ -197,27 +231,34 @@ def search_inspections(
         conn.close()
 
 
-def dashboard_stats(db_path=None):
+def dashboard_stats(user_id: int = None, db_path=None):
     conn = get_connection(db_path)
     try:
-        total = conn.execute("SELECT COUNT(*) AS c FROM inspections").fetchone()["c"]
+        scope = " WHERE user_id = ?" if user_id is not None else ""
+        scope_params = () if user_id is None else (user_id,)
+        total = conn.execute(
+            f"SELECT COUNT(*) AS c FROM inspections{scope}", scope_params
+        ).fetchone()["c"]
         by_status = {
             r["status"]: r["c"]
             for r in conn.execute(
-                "SELECT status, COUNT(*) AS c FROM inspections GROUP BY status"
+                f"SELECT status, COUNT(*) AS c FROM inspections{scope} GROUP BY status",
+                scope_params,
             ).fetchall()
         }
         avg_score = conn.execute(
-            "SELECT AVG(compliance_score) AS a FROM inspections"
+            f"SELECT AVG(compliance_score) AS a FROM inspections{scope}", scope_params
         ).fetchone()["a"]
 
         recent = conn.execute(
-            "SELECT id, product_name, manufacturer, status, compliance_score, "
-            "images_count, created_at FROM inspections ORDER BY created_at DESC LIMIT 10"
+            f"SELECT id, product_name, manufacturer, status, compliance_score, "
+            f"images_count, created_at FROM inspections{scope} "
+            f"ORDER BY created_at DESC LIMIT 10",
+            scope_params,
         ).fetchall()
 
         violations_raw = conn.execute(
-            "SELECT violations_json FROM inspections"
+            f"SELECT violations_json FROM inspections{scope}", scope_params
         ).fetchall()
         field_stats: dict[str, dict] = {}
         for row in violations_raw:
@@ -229,7 +270,8 @@ def dashboard_stats(db_path=None):
 
         trend_raw = conn.execute(
             "SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS c "
-            "FROM inspections GROUP BY day ORDER BY day DESC LIMIT 14"
+            "FROM inspections" + scope + " GROUP BY day ORDER BY day DESC LIMIT 14",
+            scope_params,
         ).fetchall()
         trend = [
             {"date": r["day"], "count": r["c"]}

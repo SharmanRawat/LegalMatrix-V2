@@ -21,6 +21,11 @@ services:
     environment:
       - OLLAMA_HOST=http://ollama:11434
       - TRANSFORMERS_TRUST_REMOTE_CODE=1
+      # Credential rotation: read from ./docker-compose.env or the shell env.
+      # Defaults are the demo fallback — set real values for any shared demo.
+      - LEGALMATRIX_AUTH_SECRET=${LEGALMATRIX_AUTH_SECRET:-change-me-in-production-legalmatrix}
+      - LEGALMATRIX_ADMIN_USERNAME=${LEGALMATRIX_ADMIN_USERNAME:-admin}
+      - LEGALMATRIX_ADMIN_PASSWORD=${LEGALMATRIX_ADMIN_PASSWORD:-admin@123}
     ports:
       - "8000:8000"
     volumes:

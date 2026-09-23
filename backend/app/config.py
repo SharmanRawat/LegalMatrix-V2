@@ -6,6 +6,32 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 ENV = os.getenv("ENV", "development")
 
 
+def _load_local_env():
+    """Load `backend/.env` (gitignored) if present.
+
+    Skipped under `ENV=test` (pytest) so test credentials stay deterministic,
+    and real environment variables always win — this only fills variables that
+    are not already set, so shell/compose overrides are never clobbered.
+    """
+    if os.getenv("ENV", "development") == "test":
+        return
+    env_file = BASE_DIR / ".env"
+    if not env_file.exists():
+        return
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_local_env()
+
+
 def get_data_dir() -> Path:
     """Resolve at call-time so tests can point each invocation at a fresh dir."""
     return Path(os.getenv("LEGALMATRIX_DATA_DIR", BASE_DIR / "data"))
@@ -29,7 +55,30 @@ os.makedirs(EVIDENCE_DIR, exist_ok=True)
 
 # Auth
 AUTH_TOKEN_SECRET = os.getenv("LEGALMATRIX_AUTH_SECRET", "change-me-in-production-legalmatrix")
+AUTH_SECRET_IS_DEFAULT = AUTH_TOKEN_SECRET == "change-me-in-production-legalmatrix"
 AUTH_TOKEN_TTL_HOURS = int(os.getenv("LEGALMATRIX_AUTH_TTL_HOURS", "12"))
+
+# Seed admin (demo bootstrap). Rotate before any shared demo/deployment:
+#   LEGALMATRIX_ADMIN_USERNAME / LEGALMATRIX_ADMIN_PASSWORD
+# ADMIN_PASSWORD_EXPLICIT drives password rotation of an already-seeded admin
+# account at startup (only when the operator deliberately set the variable).
+ADMIN_USERNAME = os.getenv("LEGALMATRIX_ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("LEGALMATRIX_ADMIN_PASSWORD", "admin@123")
+ADMIN_PASSWORD_EXPLICIT = "LEGALMATRIX_ADMIN_PASSWORD" in os.environ
+
+# Frontend origin used to build the certificate QR verify URL. Point this at
+# the deployed web app so a scanned QR opens the verify page in the browser.
+FRONTEND_URL = os.getenv("LEGALMATRIX_FRONTEND_URL", "http://localhost:3000")
+
+
+def get_admin_credentials():
+    """Read seeded-admin config at call time (env may change after import,
+    e.g. rotation triggered by a freshly exported variable or a test)."""
+    return (
+        os.getenv("LEGALMATRIX_ADMIN_USERNAME", "admin"),
+        os.getenv("LEGALMATRIX_ADMIN_PASSWORD", "admin@123"),
+        "LEGALMATRIX_ADMIN_PASSWORD" in os.environ,
+    )
 
 # Ollama
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")

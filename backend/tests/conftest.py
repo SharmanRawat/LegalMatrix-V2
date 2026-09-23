@@ -9,6 +9,9 @@ BACKEND = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND))
 
 os.environ["ALLOWED_ORIGINS"] = "http://localhost:3000"
+# Pin test env BEFORE any app import: config skips loading backend/.env under
+# ENV=test so seeded-admin credentials stay deterministic across machines/tests.
+os.environ["ENV"] = "test"
 
 
 class FakeOCR:

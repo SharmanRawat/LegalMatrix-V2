@@ -33,6 +33,7 @@ from app.config import (
     OCR_MULTI_PASS_ON_FAIL,
 )
 from app.services import preprocessing
+from app.services.progress import emit as _emit_progress
 from app.services.field_classifier import (
     _ADDRESS_LINE_RE,
     _leading_number,
@@ -75,6 +76,13 @@ _MONTH_YEAR = re.compile(
     r"(?<![A-Za-z])" + _MONTH_FN + r"[\s/.\-]*(\d{1,4})(?![A-Za-z0-9])",
     re.IGNORECASE,
 )
+
+
+# Display-only transcript floor: reads with recognition confidence in
+# [OCR_TRANSCRIPT_FLOOR, 0.4) are shown in the raw-text transcript side
+# channel but are NEVER fed to the classifier, so the frozen golden-audit
+# token stream stays byte-identical.
+OCR_TRANSCRIPT_FLOOR = 0.15
 
 
 def _expand_year(digits: str) -> str:
@@ -434,7 +442,10 @@ class SmartOCRService:
             result["ocr_meta"] = {"engine": self.legacy.model, "delegate": True}
             return result
 
-        tokens = self._ocr_tokens(image_path)
+        _emit_progress("ocr", status="running", image=Path(image_path).name)
+        tokens, raw_lines = self._ocr_tokens_with_raw(image_path)
+        _emit_progress("ocr", status="done", image=Path(image_path).name,
+                       lines=len(tokens))
         if not tokens:
             return {k: "" for k in EXPECTED_KEYS} | {
                 "ocr_meta": {"engine": self.engine_name, "error": "no_text_found"},
@@ -449,8 +460,13 @@ class SmartOCRService:
             try:
                 if self.classifier is None:
                     self.classifier = LLMFieldClassifier()
+                _emit_progress("slm", status="running", image=Path(image_path).name)
                 classification = self.classifier.classify(lines)
+                _emit_progress("slm", status="done", image=Path(image_path).name,
+                               classifier=classification.get("engine", "llm"))
             except Exception as e:
+                _emit_progress("slm", status="regex_fallback",
+                               image=Path(image_path).name, reason=str(e)[:120])
                 logger.warning("LLM classifier failed (%s); using regex", e)
         if classification is None:
             classification = self.regex_classifier.classify(lines)
@@ -536,6 +552,12 @@ class SmartOCRService:
                                         line_map[k] = [lid[0]]
                         tokens = fused
                         escalated = True
+                        _emit_progress("ocr", status="multi_pass",
+                                       image=Path(image_path).name, lines=len(fused))
+        if escalated:
+            # The multi-pass replaced the classifier-facing stream with fused
+            # tokens — keep the transcript aligned with what the classifier saw.
+            raw_lines = [dict(t) for t in tokens]
 
         result = {k: (fields.get(k, "") or "") for k in EXPECTED_KEYS}
         result["regions"] = self._regions_for_norm(tokens, line_map)
@@ -547,6 +569,14 @@ class SmartOCRService:
             "elapsed_s": round(time.time() - started, 2),
             "escalated": escalated,
             "confidence": round(sum(t["conf"] for t in tokens) / max(1, len(tokens)), 3),
+            # Display-only transcript (side channel): reads down to the
+            # transcript floor, never re-fed to the classifier.
+            "raw_ocr": {
+                "floor": OCR_TRANSCRIPT_FLOOR,
+                "count": len(raw_lines),
+                "low_conf": sum(1 for r in raw_lines if r.get("conf", 1) < 0.4),
+                "text": "\n".join(str(r.get("text", "")) for r in raw_lines),
+            },
         }
         self._attach_field_tokens(result, tokens, line_map)
         return result
@@ -721,6 +751,19 @@ class SmartOCRService:
         return out
 
     def _ocr_tokens(self, image_path: str) -> List[Dict]:
+        """Classifier-facing tokens (confidence >= 0.4). Unchanged contract."""
+        tokens, _raw = self._ocr_tokens_with_raw(image_path)
+        return tokens
+
+    def _ocr_tokens_with_raw(self, image_path: str):
+        """Return ``(tokens, raw_lines)`` from ONE engine call.
+
+        ``tokens`` is the exact classifier-facing stream (conf >= 0.4) — byte
+        compatible with the frozen golden audit. ``raw_lines`` additionally
+        keeps reads down to the transcript floor for the display-only raw-text
+        side channel; the classifier never sees them, so field extraction is
+        untouched.
+        """
         target = image_path
         applied = []
         diagnostics = {}
@@ -736,7 +779,7 @@ class SmartOCRService:
                 with __import__("PIL").Image.open(image_path) as _pil:
                     orig = cv2.cvtColor(np.array(_pil), cv2.COLOR_RGB2BGR)
             except Exception:
-                return []
+                return [], []
         o_h, o_w = orig.shape[:2]
 
         enh = cv2.imread(target)
@@ -749,8 +792,8 @@ class SmartOCRService:
                 raw_results, _elapse = self._engine(target_img)
             except Exception as e:
                 logger.error("OCR failed: %s", e)
-                return []
-            out = []
+                return [], []
+            out, raw_out = [], []
             for line in raw_results or []:
                 try:
                     if len(line) < 3:
@@ -760,7 +803,7 @@ class SmartOCRService:
                     conf = float(line[2])
                 except (TypeError, ValueError):
                     continue
-                if not text or conf < 0.4:
+                if not text or conf < OCR_TRANSCRIPT_FLOOR:
                     continue
                 try:
                     xs = [float(p[0]) for p in pts]
@@ -771,16 +814,19 @@ class SmartOCRService:
                 y1, y2 = min(ys) * sy, max(ys) * sy
                 if x2 - x1 < 3 or y2 - y1 < 3:
                     continue
-                out.append({
+                item = {
                     "text": text,
                     "box": [int(x1), int(y1), int(x2), int(y2)],
                     "conf": conf,
-                })
-            return out
+                }
+                raw_out.append(item)
+                if conf >= 0.4:
+                    out.append(item)
+            return out, raw_out
 
-        tokens = _extract(target, scale_x, scale_y)
+        tokens, raw_lines = _extract(target, scale_x, scale_y)
         if len(tokens) < 5:
-            best = tokens
+            best, best_raw = tokens, raw_lines
             for angle in [90, 180, 270]:
                 if angle == 90:
                     rotated = cv2.rotate(orig, cv2.ROTATE_90_CLOCKWISE)
@@ -799,10 +845,10 @@ class SmartOCRService:
                 r_eh, r_ew = (r_enh.shape[0], r_enh.shape[1]) if r_enh is not None else (r_h, r_w)
                 r_sx = r_w / max(1, r_ew)
                 r_sy = r_h / max(1, r_eh)
-                rot_tokens = _extract(r_target, r_sx, r_sy)
+                rot_tokens, rot_raw = _extract(r_target, r_sx, r_sy)
                 if len(rot_tokens) > len(best):
-                    best = rot_tokens
-            tokens = best
+                    best, best_raw = rot_tokens, rot_raw
+            tokens, raw_lines = best, best_raw
         if self._second_recognizer is not None:
             # Bilingual: add Devanagari reads over the same det boxes.
             deva = self._devanagari_pass_tokens(
@@ -810,7 +856,8 @@ class SmartOCRService:
             for d in deva:
                 if not any(self._box_iou(d["box"], t["box"]) > 0.5 for t in tokens):
                     tokens.append(d)
-        return tokens
+                    raw_lines.append(d)
+        return tokens, raw_lines
 
     def _regions_for_norm(self, tokens: List[Dict], line_map: Dict) -> Dict:
         """Normalized (0-1000) boxes for mrp / net_quantity, for the legacy

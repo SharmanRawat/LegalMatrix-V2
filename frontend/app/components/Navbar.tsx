@@ -3,9 +3,11 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useState } from 'react'
-import { Shield, LayoutDashboard, Scan, History, LogOut, Languages, type LucideIcon } from 'lucide-react'
+import { Shield, LayoutDashboard, Scan, History, Ruler, Users, LogOut, Languages, type LucideIcon } from 'lucide-react'
 import { getUser, clearSession } from '@/app/lib/api'
 import { useI18n } from '@/app/lib/i18n'
+
+const ADMIN_LINKS = [{ href: '/admin', label: 'User Management' }]
 
 export default function Navbar() {
   const pathname = usePathname()
@@ -17,6 +19,7 @@ export default function Navbar() {
     const active = pathname === href
     return (
       <Link
+        key={href}
         href={href}
         className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
           active ? 'bg-blue-600 text-white' : 'text-gray-700 hover:bg-gray-100'
@@ -40,6 +43,9 @@ export default function Navbar() {
             {link('/dashboard', t('Dashboard'), LayoutDashboard)}
             {link('/', t('New Inspection'), Scan)}
             {link('/history', t('History'), History)}
+            {link('/font-measurement', t('Font Size Measurement'), Ruler)}
+            {user?.role === 'ADMIN' &&
+              ADMIN_LINKS.map((l) => link(l.href, t(l.label), Users))}
           </div>
         </div>
 

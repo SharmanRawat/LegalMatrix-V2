@@ -283,6 +283,19 @@ def _strip_company(name: str) -> str:
     # Trailing standalone numbers are batch/pin codes glued by OCR
     # ('DEA 789', 'ABC FOODS 400093'), never part of the company name.
     name = re.sub(r"\s+\d[\d\s,./-]*$", "", name).strip()
+    # The trailer-trim above removes parentheticals and can glue the company
+    # suffix to the previous word ('Swabs () Ltd.' -> 'SwabsLtd.'), which
+    # defeats token matching vs 'Swabs (I) Ltd.'. Split glued suffixes back
+    # off — company suffixes are never part of the legal name word. Iterated
+    # so nested chains ('NirmaPvtLtd') unwind layer by layer.
+    glue = re.compile(
+        r"(?<=[A-Za-z])(?=(?:Ltd|Limited|Pvt|Private|Inc|LLP|LLC)\b)",
+        re.IGNORECASE,
+    )
+    prev = None
+    while name != prev:
+        prev = name
+        name = glue.sub(" ", name)
     name = re.sub(r"\s{2,}", " ", name)
     if name.lower() in _COMPANY_STOP or len(name) < 3:
         return ""

@@ -44,6 +44,21 @@ def create_user(username: str, name: str, role: str, password: str, db_path=None
         conn.close()
 
 
+def update_password(username: str, password: str, db_path=None):
+    """Reset a user's password hash — used for seeded-admin credential rotation."""
+    pwd_hash, salt = hash_password(password)
+    conn = get_connection(db_path)
+    try:
+        updated = conn.execute(
+            "UPDATE users SET password_hash = ?, salt = ? WHERE username = ?",
+            (pwd_hash, salt, username),
+        ).rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    return updated
+
+
 def get_user_by_username(username: str, db_path=None):
     conn = get_connection(db_path)
     try:
@@ -71,6 +86,29 @@ def list_users(db_path=None):
     try:
         rows = conn.execute(
             "SELECT id, username, name, role, is_active, created_at FROM users ORDER BY id"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def search_users(q: str = None, role: str = None, db_path=None):
+    """Admin user search — by username, name or role. Never exposes password hashes."""
+    clauses, params = [], []
+    if q:
+        like = f"%{q}%"
+        clauses.append("(username LIKE ? OR name LIKE ?)")
+        params.extend([like, like])
+    if role:
+        clauses.append("role = ?")
+        params.append(role.upper())
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    conn = get_connection(db_path)
+    try:
+        rows = conn.execute(
+            f"SELECT id, username, name, role, is_active, created_at FROM users {where} "
+            f"ORDER BY username, id",
+            params,
         ).fetchall()
         return [dict(r) for r in rows]
     finally:
