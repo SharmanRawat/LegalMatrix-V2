@@ -179,12 +179,6 @@ class TestInspectionServiceHelpers:
         assert inspection_service.compute_overall_status(["dimensions_where_relevant"]) == "REVIEW_REQUIRED"
         assert inspection_service.compute_overall_status(["mrp"]) == "POTENTIAL_VIOLATION"
 
-    def test_parse_net_quantity(self):
-        assert inspection_service._parse_net_quantity_g({"net_quantity": "200 g"}) == 200
-        assert inspection_service._parse_net_quantity_g({"net_quantity": "1 kg"}) == 1000
-        assert inspection_service._parse_net_quantity_g({"net_quantity": "500 ml"}) == 500
-        assert inspection_service._parse_net_quantity_g({"net_quantity": "N/A"}) is None
-
 
 class TestAuthTokens:
     def test_token_roundtrip_and_expiry(self):

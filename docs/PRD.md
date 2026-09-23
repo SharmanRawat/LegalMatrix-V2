@@ -14,7 +14,7 @@ month+year of manufacture/pack/import, MRP, consumer-care details, dimensions (w
 relevant), in a prescribed format/manner.
 
 Manual inspection does not scale (volume × variety). Typical violations: missing
-declarations, wrong font size, improper MRP (`265` without `Rs./₹`), missing USP,
+declarations, improper MRP (`265` without `Rs./₹`), missing USP,
 wrong units, misleading claims.
 
 ## 2. Users
@@ -38,10 +38,10 @@ Auth roles in code: `ADMIN / INSPECTOR / VIEWER` (`backend/app/api/auth.py`,
    (`services/inspection_service.py::EXPECTED_KEYS`, `merge_extractions`).
 3. **Validate** — 7 statutory declarations from `data/rules.json` via
    `core/rule_engine.py::evaluate_compliance` (+ `price_engine` USP math,
-   `font_measurement` readability, `inspection_service._check_misleading`).
+   `inspection_service._check_misleading`).
 4. **Report** — status `COMPLIANT / REVIEW_REQUIRED / POTENTIAL_VIOLATION`,
    compliance score, per-rule violations with rule_no + severity + remediation,
-   extraction confidence, font measurement, heat-map overlays, radar grade.
+   extraction confidence, heat-map overlays, radar grade.
 5. **Persist + retrieve** — SQLite (`users, inspections, inspection_images`),
    evidence photos SHA-256 hashed, heat-maps on disk, history/search/dashboard
    endpoints, PDF report, JSON/CSV export, compliance certificate, manual-override
@@ -60,7 +60,6 @@ Out of scope for SIH demo: e-commerce listing scraper, mobile native app
 | Extract + detect mandatory declarations | `services/ocr_engine.py` (RapidOCR + `field_classifier.py` qwen2.5:3b SLM + regex), fallback `services/ocr_service.py` (qwen2.5vl:7b VLM) | Same interface: `extract_structured / verify_currency_symbol / prompt_fingerprint` |
 | Correctness / completeness / placement | `merge_extractions` (MRP/USP/net-qty block from one photo; mfg+expiry block; consumer-care contact-channel preference), `compute_missing` | Longest-string-wins is NOT used for price/dates/care (poison cases documented) |
 | Missing / non-compliant detection | `rule_engine.evaluate_compliance` → `MISSING` vs `FORMAT_ISSUE` | 7 rules, see `docs/RULES.md` |
-| Readability / font size | `services/font_measurement.py` + `scale_calibrator.py` | Barcode-calibrated px/mm, cap-height from OCR token boxes, honesty gating → `CANNOT_MEASURE` instead of lying |
 | Compliance report + violation summary | `GET /api/inspect/{id}`, PDF builder in `api/inspections.py::_build_pdf`, `certificate_generator.py`, CSV/JSON export | fpdf2, evidence photos embedded, prompt-hash for chain-of-custody |
 | Photo + evidence attachment | `_store_evidence` (SHA-256, dedup by hash), `GET /api/inspect/{id}/evidence/{i}` | Path-traversal safe |
 | Repository + history | `repositories/inspections.py`, `GET /api/inspect`, `/history` page | Indexed by date/status/product/manufacturer |

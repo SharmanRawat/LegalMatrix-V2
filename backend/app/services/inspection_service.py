@@ -1,5 +1,5 @@
 """Inspection service — orchestrates OCR extraction, compliance checks,
-font measurement, evidence storage, heat-maps and persistence.
+evidence storage, heat-maps and persistence.
 
 Keeps the API layer thin and the pipeline testable (OCR can be mocked).
 """
@@ -17,8 +17,7 @@ from app.config import QWN_MODEL, get_evidence_dir as resolve_evidence_dir
 from app.config import VLM_RESCUE_ENABLED, VLM_RESCUE_MODEL, VLM_RESCUE_CONFIDENCE_THRESHOLD
 from app.core.rule_engine import rule_engine
 from app.repositories import inspections as inspection_repo
-from app.services import compliance_scorer, heatmap_generator, preprocessing
-from app.services.font_measurement import FontMeasurementService
+from app.services import compliance_scorer, heatmap_generator
 from app.services.manufacturer_address import extract_manufacturer_address
 from app.services.ocr_transcript import build_ocr_transcript
 from app.services.price_engine import price_engine
@@ -719,33 +718,12 @@ def _route_by_label_types(results: List[Dict],
     return merged
 
 
-def _collect_text_boxes(results: List[Dict]) -> Dict[int, List[float]]:
-    """Map {image_index: [x1,y1,x2,y2]} of MRP/NetQty regions from VLM output
-    (0-1000 normalized), preferring the MRP region for cap-height measurement."""
-    boxes = {}
-    for i, result in enumerate(results):
-        if not result:
-            continue
-        regions = result.get("regions") or {}
-        for field in ("mrp", "net_quantity"):
-            box = regions.get(field)
-            if box and len(box) == 4:
-                boxes[i] = [float(v) for v in box[:4]]
-                break
-    return boxes
-
-
 def _sha256_of_file(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
-
-
-def _exif_capture_time(image_path: str) -> Optional[str]:
-    """ISO timestamp of photo capture (EXIF DateTimeOriginal / Digitized)."""
-    return preprocessing.safe_capture_time(image_path)
 
 
 def _store_evidence(image_paths: List[str]) -> List[Dict]:
@@ -821,7 +799,7 @@ def apply_manual_overrides(inspection_id: str, overrides: Dict, user_id: Optiona
     declarations = {k: (str(v).strip() if v else "") for k, v in inspection.get("declarations", {}).items()}
     meta = dict(inspection.get("meta") or {})
     # _row_to_dict flattens meta_json to the top level; re-collect those keys.
-    for flat_key in ("compliance_radar", "grade", "rule_version", "font_measurement", "ocr_engine",
+    for flat_key in ("compliance_radar", "grade", "rule_version", "ocr_engine",
                      "classifier", "field_evidence", "extraction_confidence"):
         if flat_key not in meta and inspection.get(flat_key):
             meta[flat_key] = inspection[flat_key]
@@ -872,51 +850,15 @@ def apply_manual_overrides(inspection_id: str, overrides: Dict, user_id: Optiona
 def _rebuild_radar(safe_decl: Dict, missing: List[str], violations: List[Dict],
                    meta: Dict, inspection: Dict) -> Dict:
     """Rebuild the compliance radar after corrections, keeping the measured
-    font / readability signals from the original scan."""
-    font_measurement = meta.get("font_measurement") or {}
+    readability signal from the original scan."""
     ocr_meta = {"confidence": meta.get("ocr_confidence")}
-    return compliance_scorer.build_radar(safe_decl, missing, violations, font_measurement, ocr_meta)
+    return compliance_scorer.build_radar(safe_decl, missing, violations, ocr_meta)
 
 
 def compute_overall_status(missing: List[str]) -> str:
     if missing:
         return "POTENTIAL_VIOLATION" if any(m in CRITICAL for m in missing) else "REVIEW_REQUIRED"
     return "COMPLIANT"
-
-
-def _parse_net_quantity_g(decl: Dict) -> Optional[float]:
-    text = decl.get("net_quantity", "") or ""
-    m = re.search(r"(\d+(?:\.\d+)?)\s*(g|gm|gram|kg|ml|l|litre|liter|m|cm)?", text, re.IGNORECASE)
-    if not m:
-        return None
-    value = float(m.group(1))
-    unit = (m.group(2) or "").lower()
-    if unit in ("g", "gm", "gram", "ml"):
-        return value
-    if unit == "kg":
-        return value * 1000
-    if unit in ("l", "litre", "liter"):
-        return value * 1000
-    if unit in ("m", "cm"):
-        return value
-    return value
-
-
-def measurement_service_get_required(net_qty_g: Optional[float]) -> Optional[float]:
-    if net_qty_g is None:
-        return None
-    rules = rule_engine.rules.get("font_size_requirements", {}).get("numerals_weight_volume", [])
-    for rule in rules:
-        cond = rule.get("condition", "")
-        if "<= " in cond and "AND" not in cond:
-            if net_qty_g <= float(cond.split("<= ")[1]):
-                return rule.get("normal")
-        elif "AND" in cond:
-            lower = float(cond.split("> ")[1].split(" AND")[0])
-            upper = float(cond.split("<= ")[1])
-            if lower < net_qty_g <= upper:
-                return rule.get("normal")
-    return None
 
 
 def _per_image_tokens(individual_results: List[Dict]) -> List[List[Dict]]:
@@ -1026,41 +968,6 @@ def _extraction_confidence(
     }
 
 
-def _measure_font_for_image(
-    image_path: str,
-    tokens: List[Dict],
-    field_map: Dict,
-    required_mm: Optional[float],
-    text_box: Optional[List[float]],
-) -> Dict:
-    """Measure the declaration font using OCR token boxes when available,
-    otherwise fall back to the legacy VLM-box/heuristic path."""
-    svc = FontMeasurementService()
-    mrpq = [t for t in tokens if _token_belongs(t, field_map, ("net_quantity",))]
-    mrp = [t for t in tokens if _token_belongs(t, field_map, ("mrp",))]
-    tokens_for_measure = mrpq or mrp
-    if tokens_for_measure:
-        res = svc.measure_from_tokens(image_path, tokens_for_measure, required_mm=required_mm)
-        if res is not None:
-            res["image_index"] = None
-            return res
-    res = svc.measure(image_path, required_mm=required_mm, text_box=text_box)
-    if res is not None:
-        res["image_index"] = None
-    return res or {}
-
-
-def _token_belongs(token: Dict, field_map: Dict, field_names: tuple) -> bool:
-    if not field_map:
-        return False
-    for field in field_names:
-        boxes = [t.get("box") for t in (field_map.get(field) or [])]
-        for b in boxes:
-            if b and b == token.get("box"):
-                return True
-    return False
-
-
 def _vlm_rescue(image_paths: List[str], individual_results: List[Dict], ocr) -> List[Dict]:
     """Re-read images that produced low-confidence extractions with a
     vision-language model. Used only when VLM_RESCUE_ENABLED is on and the
@@ -1086,12 +993,11 @@ def run_inspection(
     image_paths: List[str],
     user_id: Optional[int] = None,
     ocr=None,
-    text_boxes: Optional[Dict[int, List[float]]] = None,
     label_types: Optional[List[Optional[str]]] = None,
     progress_cb=None,
 ) -> Dict:
-    """Full pipeline: preprocess → extract → merge → compliance → font →
-    heat-map → radar → persist.
+    """Full pipeline: preprocess → extract → merge → compliance → heat-map →
+    radar → persist.
 
     ``label_types`` (aligned with image_paths, one of front/back/side/other)
     routes each field to the photo whose label type is its strongest source;
@@ -1119,8 +1025,6 @@ def run_inspection(
             fields_found=sum(1 for k in EXPECTED_KEYS if individual_results[-1].get(k)),
             elapsed_s=meta.get("elapsed_s"),
         )
-
-    text_boxes = _collect_text_boxes(individual_results)
 
     merged = merge_extractions(individual_results, label_types)
     safe_decl = {key: merged.get(key, "") for key in EXPECTED_KEYS}
@@ -1156,61 +1060,23 @@ def run_inspection(
                    passed=compliance.get("passed_count", 0),
                    total=compliance.get("total_rules", 0))
 
-    net_qty_g = _parse_net_quantity_g(safe_decl)
-    required_mm = measurement_service_get_required(net_qty_g)
-
     token_lists = _per_image_tokens(individual_results)
     field_maps = [r.get("field_map", {}) for r in individual_results]
 
     inspection_id = next_inspection_id()
 
-    font_measurement = None
-    first_unmeasurable = None
-    per_image_cal_bbox: Dict[int, Optional[List[float]]] = {}
-    _emit_progress("font", status="running")
-    for index, path in enumerate(image_paths):
-        if not Path(path).exists():
-            continue
-        fm = _measure_font_for_image(
-            path,
-            token_lists[index] if index < len(token_lists) else [],
-            field_maps[index] if index < len(field_maps) else {},
-            required_mm,
-            (text_boxes or {}).get(index),
-        )
-        if not fm:
-            continue
-        fm["image_index"] = index
-        fm["image_path"] = str(path)
-        capture_time = _exif_capture_time(path)
-        if capture_time:
-            fm["photo_capture_timestamp"] = capture_time
-        if fm.get("calibration_bbox"):
-            per_image_cal_bbox[index] = [float(v) for v in fm["calibration_bbox"]]
-        if fm.get("status") == "CANNOT_MEASURE":
-            if first_unmeasurable is None:
-                first_unmeasurable = fm
-            continue
-        if font_measurement is None:
-            font_measurement = fm
-
-    _emit_progress("font", status="done",
-                   measured=(font_measurement or {}).get("status", "NOT_MEASURED"))
-
     misleading_checks = _check_misleading(safe_decl, compliance, currency_verified)
 
     _emit_progress("evidence", status="running")
     heatmaps = _render_heatmaps(
-        image_paths, token_lists, field_maps, per_image_cal_bbox,
+        image_paths, token_lists, field_maps, {},
         compliance["violations"], inspection_id,
     )
     _emit_progress("evidence", status="done", heatmaps=len(heatmaps))
 
     ocr_meta_list = [r.get("ocr_meta") or {} for r in individual_results]
-    radar = _build_radar_all(
-        safe_decl, missing, compliance["violations"],
-        font_measurement, ocr_meta_list, image_paths, token_lists, field_maps,
-        required_mm,
+    radar = compliance_scorer.build_radar(
+        safe_decl, missing, compliance["violations"], _pick_meta(ocr_meta_list),
     )
 
     prompt_hash = ""
@@ -1261,7 +1127,6 @@ def run_inspection(
         "compliance_radar": radar,
         "grade": radar.get("grade", "D") if radar else "D",
         "rule_version": rule_engine.version,
-        "font_measurement": font_measurement,
         "heatmaps": heatmaps,
         "ocr_engine": ocr_engine_name,
         "classifier": _classifier_label(ocr),
@@ -1285,7 +1150,6 @@ def run_inspection(
         "violations": compliance["violations"],
         "misleading_checks": misleading_checks,
         "extraction_prompt_hash": prompt_hash,
-        "font_measurement": font_measurement,
         "compliance_radar": radar,
         "grade": radar.get("grade", "D") if radar else "D",
         "heatmaps": heatmaps,
@@ -1365,33 +1229,6 @@ def _render_heatmaps(
                 "calibration_box": rendered["calibration_box"],
             })
     return out
-
-
-def _build_radar_all(
-    safe_decl: Dict,
-    missing: List[str],
-    violations: List[Dict],
-    font_measurement: Optional[Dict],
-    ocr_meta_list: List[Dict],
-    image_paths: List[str],
-    token_lists: List[List[Dict]],
-    field_maps: List[Dict],
-    required_mm: Optional[float],
-) -> Dict:
-    """Merge the best per-photo font/readability signal into one radar."""
-    primary = compliance_scorer.build_radar(
-        safe_decl, missing, violations, font_measurement,
-        _pick_meta(ocr_meta_list),
-    )
-    if len(image_paths) <= 1:
-        return primary
-    secondary = None
-    if font_measurement is not None:
-        secondary_meta = _pick_meta(ocr_meta_list, skip=0) or {}
-        secondary = compliance_scorer.build_radar(
-            safe_decl, missing, violations, font_measurement, secondary_meta
-        )
-    return compliance_scorer.merge_radar(primary, secondary)
 
 
 def _pick_meta(ocr_meta_list: List[Dict], skip: int = 0) -> Optional[Dict]:

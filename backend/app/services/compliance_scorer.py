@@ -6,7 +6,6 @@ Axis definitions (0-100 each):
   pricing       — MRP format + USP consistency
   process_dates — manufacturing/expiry dates
   consumer_care — consumer contact presence
-  font_size     — measured vs required font height (if measurable)
   readability   — OCR confidence/legibility proxy
 """
 from typing import Dict, List, Optional
@@ -24,7 +23,6 @@ def build_radar(
     declarations: Dict,
     missing: List[str],
     violations: List[Dict],
-    font_measurement: Optional[Dict],
     ocr_meta: Optional[Dict] = None,
 ) -> Dict:
     REQUIRED = {
@@ -47,34 +45,20 @@ def build_radar(
     care = str(declarations.get("consumer_care", "") or "")
     care_score = _clamp(round(60.0 + (40.0 if ("@" in care or care.strip()) else 0.0), 1))
 
-    if font_measurement and font_measurement.get("measured_mm") is not None:
-        measured = font_measurement["measured_mm"]
-        required = font_measurement.get("required_mm")
-        if required and required > 0:
-            ratio = measured / required
-            font_score = float(_clamp(round(ratio * 100.0, 1)))
-        else:
-            font_score = 50.0
-        font_weight = 0.20
-    else:
-        # No calibration reference (credit card / barcode / exif) → the font axis
-        # is UNKNOWABLE, not failed. Exclude it rather than fabricate a verdict.
-        font_score = None
-        font_weight = 0.0
-
     avg_conf = (ocr_meta or {}).get("confidence")
     if isinstance(avg_conf, (int, float)) and avg_conf > 0:
         readability_score = _clamp(round(avg_conf * 100.0, 1))
     else:
         readability_score = 50.0
 
+    # Weights rescaled proportionally after the font-size axis was removed,
+    # keeping the same relative importance of the remaining axes (sum = 1.0).
     axes = [
-        {"axis": "Declarations", "score": round(declarations_score, 1), "weight": 0.30},
-        {"axis": "Pricing", "score": round(pricing_score, 1), "weight": 0.20},
-        {"axis": "Dates", "score": round(date_score, 1), "weight": 0.10},
-        {"axis": "Consumer Care", "score": round(care_score, 1), "weight": 0.10},
-        {"axis": "Font Size", "score": (None if font_score is None else round(font_score, 1)), "weight": font_weight},
-        {"axis": "Readability", "score": round(readability_score, 1), "weight": 0.10},
+        {"axis": "Declarations", "score": round(declarations_score, 1), "weight": 0.375},
+        {"axis": "Pricing", "score": round(pricing_score, 1), "weight": 0.25},
+        {"axis": "Dates", "score": round(date_score, 1), "weight": 0.125},
+        {"axis": "Consumer Care", "score": round(care_score, 1), "weight": 0.125},
+        {"axis": "Readability", "score": round(readability_score, 1), "weight": 0.125},
     ]
     known = [a for a in axes if a["score"] is not None]
     total_w = sum(a["weight"] for a in known) or 1e-6
@@ -102,18 +86,3 @@ def build_radar(
         "grade_label": grade_label,
         "axes": axes,
     }
-
-
-def merge_radar(primary: Dict, secondary: Optional[Dict]) -> Dict:
-    """Combine the best measured axis of a secondary image's radar into the
-    primary one (used when several photos share one inspection)."""
-    if not secondary:
-        return primary
-    axes = {a["axis"]: a for a in primary.get("axes", [])}
-    for a in secondary.get("axes", []):
-        if a["axis"] not in axes:
-            axes[a["axis"]] = a
-        elif a["score"] > axes[a["axis"]]["score"]:
-            axes[a["axis"]] = a
-    return {"overall": primary.get("overall", 0), "grade": primary.get("grade", "D"),
-            "grade_label": primary.get("grade_label", ""), "axes": list(axes.values())}

@@ -101,16 +101,6 @@ class TestMrpValidation:
         assert "numeric" in msg.lower()
 
 
-class TestFontRequirements:
-    def test_small_pack_requires_1mm(self):
-        rules = rule_engine.rules["font_size_requirements"]["numerals_weight_volume"]
-        assert rules[0]["normal"] == 1.0
-        assert rules[0]["condition"] == "net_quantity <= 200"
-
-    def test_large_pack_requires_4mm(self):
-        rules = rule_engine.rules["font_size_requirements"]["numerals_weight_volume"]
-        assert rules[-1]["normal"] == 4.0
-
 class TestMisleadingChecks:
     """USP (unit sale price) cross-checks in the misleading-consistency pass."""
 

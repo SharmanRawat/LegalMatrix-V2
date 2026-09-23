@@ -860,8 +860,7 @@ class SmartOCRService:
         return tokens, raw_lines
 
     def _regions_for_norm(self, tokens: List[Dict], line_map: Dict) -> Dict:
-        """Normalized (0-1000) boxes for mrp / net_quantity, for the legacy
-        font-measurement path."""
+        """Normalized (0-1000) boxes for mrp / net_quantity."""
         if not tokens:
             return {}
         max_x = max(t["box"][2] for t in tokens)

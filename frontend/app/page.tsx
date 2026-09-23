@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  Camera, Upload, X, Scan, CheckCircle2, Loader2, ScanLine, FileText, Ruler, FileCheck2,
+  Camera, Upload, X, Scan, CheckCircle2, Loader2, ScanLine, FileText, FileCheck2,
   Tag, ClipboardList, Package, ArrowUpFromLine, Paperclip,
   type LucideIcon,
 } from 'lucide-react'
@@ -28,7 +28,6 @@ const ANALYZE_STEPS: { label: string; desc: string; Icon: LucideIcon }[] = [
   { label: 'Uploading photos', desc: 'Validating images and format', Icon: Upload },
   { label: 'Reading label fields', desc: 'OCR extraction of declarations', Icon: ScanLine },
   { label: 'Verifying rules', desc: 'Checking against Legal Metrology rules', Icon: FileText },
-  { label: 'Measuring font size', desc: 'Readability and dimensions', Icon: Ruler },
   { label: 'Finalizing report', desc: 'Scoring and evidence pack', Icon: FileCheck2 },
 ]
 

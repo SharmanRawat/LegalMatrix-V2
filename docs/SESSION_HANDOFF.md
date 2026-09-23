@@ -73,10 +73,8 @@ FastAPI backend in `backend/`; Next.js frontend in `frontend/`.
 4. Optional (user-approved-only): p23 golden visual check; Devanagari
    shaping/CTC decoding; Devanagari web font; Hindi-label accuracy target vs
    English.
-5. Demo readiness: user records with clean images; font-measurement axis only
-   lights up when a calibration reference (credit card/barcode/EXIF) is in-shot
-   — show it only then. Mobile/web already Next.js-responsive; OCR stays on
-   the FastAPI backend.
+5. Demo readiness: user records with clean images. Mobile/web already
+   Next.js-responsive; OCR stays on the FastAPI backend.
 
 ## Key files
 - `backend/app/services/inspection_service.py` — merge gate:
@@ -84,8 +82,7 @@ FastAPI backend in `backend/`; Next.js frontend in `frontend/`.
   `merge_extractions`.
 - `backend/app/services/ocr_engine.py` — CPU OCR (RapidOCR / PP-OCRv3).
 - `backend/app/services/field_classifier.py` — 3B SLM (temperature 0).
-- `backend/app/services/font_measurement.py`, `scale_calibrator.py`,
-  `compliance_scorer.py` — font axis (needs calibration ref).
+- `backend/app/services/compliance_scorer.py` — radar axes + grade.
 - `backend/app/services/certificate_generator.py`, `backend/app/api/inspections.py`
   — PDF report (Unicode/Deva font routing).
 - `backend/scripts/pipeline_audit.py`, `backend/data/answers_golden.json`,

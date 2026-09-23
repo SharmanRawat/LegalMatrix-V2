@@ -24,24 +24,6 @@
     "dimensions_where_relevant"
   ],
 
-  "font_size_requirements": {
-    "letters": {
-      "normal": 1.0,
-      "embossed": 2.0
-    },
-    "numerals_weight_volume": [
-      {"condition": "net_quantity <= 200", "unit": "g/ml", "normal": 1.0, "embossed": 2.0},
-      {"condition": "net_quantity > 200 AND net_quantity <= 500", "unit": "g/ml", "normal": 2.0, "embossed": 4.0},
-      {"condition": "net_quantity > 500", "unit": "g/ml", "normal": 4.0, "embossed": 6.0}
-    ],
-    "numerals_length_area_number": [
-      {"condition": "pdp_area <= 100", "unit": "cm²", "normal": 1.0, "embossed": 2.0},
-      {"condition": "pdp_area > 100 AND pdp_area <= 500", "unit": "cm²", "normal": 2.0, "embossed": 4.0},
-      {"condition": "pdp_area > 500 AND pdp_area <= 2500", "unit": "cm²", "normal": 4.0, "embossed": 6.0},
-      {"condition": "pdp_area > 2500", "unit": "cm²", "normal": 6.0, "embossed": 6.0}
-    ]
-  },
-
   "usp_rules": {
     "source": "G.S.R. 226(E) and G.S.R. 60(E)",
     "effective_date": "2023-04-01",

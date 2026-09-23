@@ -1,7 +1,6 @@
-"""Tests for the three submission fixes:
+"""Tests for the two submission fixes:
 1. rule_version is persisted with each scan and exported (JSON/CSV/PDF).
 2. Admin-only DELETE /api/inspect/{id} removes a stored inspection.
-3. (EXIF chain is covered in test_font_measurement.py.)
 """
 import pytest
 

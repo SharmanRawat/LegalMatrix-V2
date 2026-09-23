@@ -6,7 +6,6 @@ Color legend (drawn on the image):
   green  — declaration present and compliant
   red    — declaration present but failed a format/compliance check
   yellow — present but low OCR confidence (manual review)
-  cyan   — calibration reference (credit card / barcode) used for font scale
 """
 import logging
 from typing import Dict, List, Optional

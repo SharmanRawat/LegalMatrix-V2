@@ -6,7 +6,7 @@ Department of Consumer Affairs). A field inspector photographs a product label w
 phone; the platform extracts the declarations with CPU OCR + a lightweight on-device
 classifier, checks them
 against the **Legal Metrology (Packaged Commodities) Rules, 2011** (as amended through 2026),
-measures font readability, flags missing or misleading declarations, and produces an evidence-backed
+flags missing or misleading declarations, and produces an evidence-backed
 report (PDF, JSON, CSV). Every scan is persisted with cryptographic evidence hashes for future
 enforcement action.
 
@@ -36,7 +36,7 @@ mobile compute on the device.
 
 ## Stack
 
-- **Backend** — FastAPI (Python 3.12+), SQLite (stdlib), OpenCV (barcode + font measurement),
+- **Backend** — FastAPI (Python 3.12+), SQLite (stdlib), OpenCV (barcode),
   fpdf2 (PDF reports). No ORM, no heavy frameworks.
 - **Inference (CPU-first, by design)** — RapidOCR (PP-OCRv3, ONNX) for detection +
   recognition, then a small Ollama classifier (`qwen2.5:3b`) maps OCR lines to the 9
@@ -54,15 +54,15 @@ backend/
     config.py                      # settings (paths resolve at call-time for easy test isolation)
     main.py                        # FastAPI app, lifespan DB init + admin seed
     api/                           # inspections, auth, dashboard, search endpoints
-    services/                      # inspection pipeline, price engine, rule engine, auth, OCR, font
+    services/                      # inspection pipeline, price engine, rule engine, auth, OCR
     repositories/                  # users, inspections (SQL)
     database/models.py             # schema (users, inspections, inspection_images)
     core/rule_engine.py            # compliance rules & evaluation
-  tests/                           # pytest suite (OCR mocked) — 62 tests
+  tests/                           # pytest suite (OCR mocked) — 266 tests
   data/rules.json                  # codified rules incl. 2026 amendments
   requirements.txt                 # runtime deps
 frontend/
-  app/                             # pages: / (inspect), /dashboard, /history, /inspection/[id], /login, /admin, /verify, /font-measurement
+  app/                             # pages: / (inspect), /dashboard, /history, /inspection/[id], /login, /admin, /verify
   app/lib/api.ts                   # axios wrapper with bearer-token injection
   public/sw.js + manifest.json     # PWA
 docker-compose.yml                 # ollama + backend + frontend
@@ -78,12 +78,12 @@ images/                            # 70+ real label photos used for validation/d
 | OCR extraction + classifier mapping of 9 declarations | `backend/app/services/ocr_engine.py` (CPU RapidOCR + `qwen2.5:3b`) |
 | Mandatory declaration checks (7 fields) | `core/rule_engine.py` |
 | MRP / USP math, net quantity parsing | `services/price_engine.py` |
-| Font size & readability measurement | `services/font_measurement.py` (barcode-calibrated PPM, cap-height via VLM boxes, honesty gating) |
+| MRP / USP math, net quantity parsing | `services/price_engine.py` |
 | Misleading-declaration heuristics | `services/inspection_service.py` |
 | PDF report with embedded evidence photos | `GET /api/inspect/{id}/report` (stored, corrected row) + `POST /api/inspect/report` |
 | Editable exports (JSON / CSV) | `GET /api/inspect/{id}/export` |
 | Evidence photo attachment + SHA-256 hashing | `services/inspection_service.py`, `/api/inspect/{id}/evidence/{i}` |
-| Evidence Planner (auto-flags declarations still required for a defensible decision) | `core/rule_engine.py` `missing_declarations`, REVIEW_REQUIRED reasons + calibration exclusions in `inspection_service.py` |
+| Evidence Planner (auto-flags declarations still required for a defensible decision) | `core/rule_engine.py` `missing_declarations`, REVIEW_REQUIRED reasons in `inspection_service.py` |
 | Certificate QR + public verification | `GET /api/inspect/{id}/certificate`, `GET /api/inspect/verify`, `/verify` page |
 | Report repository / inspection history | `repositories/inspections.py` |
 | Role-based auth (ADMIN/INSPECTOR/VIEWER) | `api/auth.py`, `services/auth_service.py` |
@@ -124,13 +124,12 @@ path), `QWN_MODEL` (default `qwen2.5vl:7b` — the optional vision model), `VLM_
 ## Tests
 
 ```bash
-cd backend && venv/bin/python -m pytest -q        # 76 passed (OCR mocked)
+cd backend && venv/bin/python -m pytest -q        # 266 passed (OCR mocked)
 ```
 
 The test suite exercises: rule evaluation, USP/MRP math and exemptions, repositories,
 dashboard/search statistics, HMAC auth + role gating, the full inspect pipeline, PDF bytes,
-JSON/CSV exports, evidence serving, font-measurement calibration/gating/VLM-box-sanity and
-synthetic ground-truth cap-height recovery on rendered labels.
+JSON/CSV exports, evidence serving, and readability signals baked into the compliance score.
 
 ## Deployment
 
@@ -161,34 +160,21 @@ volumes; swap the repositories layer for Postgres when scaling beyond a single n
 - Evidence Planner: the platform never just reports a verdict — it lists what evidence is
   still needed for a *defensible* decision. Missing mandatory declarations appear as
   `missing_declarations`, low-confidence reads are flagged back to the inspector for
-  physical verification, and unmeasurable axes (font size without a calibration reference)
-  are excluded rather than guessed. Every flagged item traces to its source rule, field,
+  physical verification. Every flagged item traces to its source rule, field,
   OCR token, image region, and original package image.
 - Role-based access control: ADMIN / INSPECTOR / VIEWER, seeded from `backend/.env`;
   admin user management (search users, view their scans, reset passwords — passwords are
   one-way hashed and never recoverable).
-- Font readability with honest gating: calibration chain (credit card → barcode → EXIF),
-  explicit uncertainty when calibrated, REVIEW_REQUIRED (never a fabricated verdict) when
-  uncalibrated. Font size is measured in mm only when a defensible reference exists.
 
 ### Next (roadmap)
 
-- **Guided calibration-card capture** in the capture UI — the inspector is prompted when a
-  reference object is missing, instead of discovering it in the report.
 - **CPU OCR engine upgrade** — bench-verified on hard labels: PP-OCRv6 (`rapidocr` 3.9)
   recovers text PP-OCRv3 misses (e.g. net quantity `5 Fl. Oz. e 150m` on a curved glossy
   can). Roadmap only — swapping the engine is a pipeline change that must pass the same
   0-hit merge gate as any other change before it ships. Extraction quality on blurry or
   curved labels is an honest model-budget limit of the current CPU path.
-- **Per-field numeral-height rendering** on the PDF report and compliance radar, sourced
-  from the calibrated measurement axis.
-- **Quantitative regression set** of synthetic labels with known pixel heights, so every
-  font-measurement change is validated against ground truth.
 - Tenant / user-level data scoping for the dashboard (stats are global today).
 - Postgres swap for the repositories when scaling beyond a single node.
-
-More detail on the font-measurement roadmap lives on the in-app page
-[`/font-measurement`](frontend/app/font-measurement/page.tsx).
 
 ## Judge-facing demo walkthrough
 

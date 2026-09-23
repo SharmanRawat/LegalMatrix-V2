@@ -28,35 +28,14 @@ Missing → violation `status=MISSING`. Present-but-malformed → `FORMAT_ISSUE`
 - **USP**: `validate_usp_format` (digit + unit) + `price_engine.calculate_usp(MRP/net_qty)` cross-check. Printed USP differing >0.05 from computed → `usp_mismatch_computed` MEDIUM. USP identical to MRP → `usp_missing_or_equal_mrp` MEDIUM (USP probably not actually printed; exempt case below excluded).
 - **Consumer care**: contact-channel regex gate (see above) — a long disclaimer without email/phone is rejected rather than accepted.
 
-## 3. Font-size requirements (`font_size_requirements`)
-
-Letters (normal/embossed): 1.0 / 2.0 mm minimum.
-
-Numerals for weight/volume (normal / embossed), keyed by net quantity:
-
-| Net qty | Normal | Embossed |
-|---|---|---|
-| ≤ 200 g/ml | 1.0 mm | 2.0 mm |
-| 200–500 g/ml | 2.0 mm | 4.0 mm |
-| > 500 g/ml | 4.0 mm | 6.0 mm |
-
-Numerals for length/area/number keyed by PDP area (100/500/2500 cm² → 1/2/4/6 mm).
-Measurement: `font_measurement.py` (token-box cap-height preferred) calibrated via
-`scale_calibrator.py` chain credit-card → barcode → EXIF; result carries
-`measured_mm / required_mm / uncertainty / status`; unmeasurable → honest
-`CANNOT_MEASURE`, never a fake pass. Placement free-area rule (height above/below,
-2× height left/right) and manner rules (legible/prominent, contrasting colour,
-Hindi+English) are documented in `rules.json` but only partially auto-checked —
-flag visually for now.
-
-## 4. USP rules (`usp_rules`, G.S.R. 226(E)/60(E), effective 2023-04-01)
+## 3. USP rules (`usp_rules`, G.S.R. 226(E)/60(E), effective 2023-04-01)
 
 Formula `USP = MRP / Net_Quantity`, 2 decimals. Unit mapping: <1 kg → `Rs per g`,
 ≥1 kg → `Rs per kg`; <1 L → `Rs per ml`, ≥1 L → `Rs per litre`; length <1 m →
 `per cm` else `per meter`; count → `per number`. Exemptions: `MRP == USP` (no USP
 needed); alcoholic beverages (state excise law applies).
 
-## 5. Exemptions 26(a)–(f) and exclusions
+## 4. Exemptions 26(a)–(f) and exclusions
 
 - **26(a)**: net ≤10 g/ml exempt — except 10–20 g/ml still needs MRP + net qty;
   **pan masala carve-out (G.S.R. 881(E), 2026-02-01): exemption does NOT apply**.
@@ -68,7 +47,7 @@ needed); alcoholic beverages (state excise law applies).
   skip Rules 6/7/33. **E-commerce** country-filter (G.S.R. 312(E)) effective
   2027-07-01 — not enforced yet. QR-for-electronics (2022) expired.
 
-## 6. How to change a rule
+## 5. How to change a rule
 
 1. Edit `backend/app/data/rules.json` (bump `rule_version`).
 2. Mirror text/severity in `core/rule_engine.py::RULE_DETAILS` + mapping `_rule_to_field`.

@@ -42,7 +42,7 @@
       grade), compliance strip (score / rules passed / extraction confidence),
       declarations **table** with OK / NOT DETECTED / OVERRIDDEN chips + per-field
       evidence snippets + extraction coverage, manual-override **audit trail**,
-      font-measurement line, rule-violations with severity chips + extracted values,
+      rule-violations with severity chips + extracted values,
       2-up photos with per-image SHA-256 hashes, page-number footer. Bundled **Hind**
       (Latin+Devanagari, OFL) so Hindi field values render correctly in the PDF
       (`backend/app/assets/fonts/` + `_font_for` script routing; `_sanitize` no longer

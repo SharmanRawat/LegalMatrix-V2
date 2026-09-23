@@ -105,7 +105,7 @@ async def inspect_package(
                 def cb(payload):
                     progress_store.append(x_progress_token, payload)
             return inspection_service.run_inspection(
-                paths, user_id, None, None, normalized, progress_cb=cb)
+                paths, user_id=user_id, label_types=normalized, progress_cb=cb)
 
         result = await run_in_thread(_run)
         return JSONResponse(content=result)
@@ -703,27 +703,6 @@ def _build_pdf(result: Dict) -> bytes:
             pdf.cell(0, 4, f"Original AI value: {prev}   |   Corrected by user id {who} on {at}",
                      new_x="LMARGIN", new_y="NEXT")
         pdf.ln(0.5)
-
-    # ── Font measurement ──
-    fm = result.get("font_measurement") or {}
-    fm_status = fm.get("status")
-    if fm_status:
-        _section(pdf, "Font Measurement (Rule 4(1))")
-        meas = fm.get("measured_mm")
-        req = fm.get("required_mm")
-        unc = fm.get("uncertainty")
-        line = (f"Measured: {meas if meas is not None else 'n/a'} mm   |   "
-                f"Required: {req if req is not None else 'n/a'} mm   |   "
-                f"Uncertainty: +/-{unc if unc is not None else 'n/a'} mm")
-        _set_font(pdf, line, "", 8.5)
-        pdf.set_text_color(60, 60, 60)
-        pdf.cell(0, 5, line, new_x="LMARGIN", new_y="NEXT")
-        fm_color = {"COMPLIANT": (22, 163, 74), "REVIEW_REQUIRED": (234, 179, 8),
-                    "CANNOT_MEASURE": (100, 100, 100), "POTENTIAL_VIOLATION": (220, 38, 38)}
-        pdf.set_text_color(*fm_color.get(fm_status, (100, 100, 100)))
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.cell(0, 5, f"Font Status: {fm_status}", new_x="LMARGIN", new_y="NEXT")
-        pdf.set_text_color(0, 0, 0)
 
     # ── Violations / rules ──
     violations = result.get("violations", [])

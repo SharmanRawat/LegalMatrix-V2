@@ -159,22 +159,6 @@ class RuleEngine:
 
         return None
 
-    def get_font_requirements(self, net_quantity: float):
-        numerals = self.rules.get("font_size_requirements", {}).get("numerals_weight_volume", [])
-        for rule in numerals:
-            condition = rule.get("condition", "")
-            if "<= " in condition:
-                _, limit = condition.split("<= ")
-                if net_quantity <= float(limit):
-                    return {"normal": rule.get("normal"), "embossed": rule.get("embossed")}
-            elif "> " in condition and "<=" in condition:
-                parts = condition.split("AND")
-                lower = float(parts[0].split("> ")[1])
-                upper = float(parts[1].split("<= ")[1])
-                if lower < net_quantity <= upper:
-                    return {"normal": rule.get("normal"), "embossed": rule.get("embossed")}
-        return {"normal": None, "embossed": None}
-
     def validate_mrp_format(self, mrp_text, symbol_verified=False):
         if not mrp_text:
             return False, "MRP not found"
