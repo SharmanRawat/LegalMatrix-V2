@@ -240,7 +240,7 @@ INSPECTION_CONFIGS = [
         "violations": [
             {
                 "rule_id": "consumer_care_details",
-                "rule_no": "Rule 6(1)(f)",
+                "rule_no": "Rule 6(2)",
                 "severity": "HIGH",
                 "status": "MISSING",
                 "field": "consumer_care",
@@ -250,7 +250,7 @@ INSPECTION_CONFIGS = [
             },
             {
                 "rule_id": "dimensions_where_relevant",
-                "rule_no": "Rule 6(1)(g)",
+                "rule_no": "Rule 6(1)(f)",
                 "severity": "MEDIUM",
                 "status": "MISSING",
                 "field": "dimensions",
@@ -321,9 +321,9 @@ INSPECTION_CONFIGS = [
         },
         "missing": ["dimensions_where_relevant"],
         "violations": [
-            {
+         {
                 "rule_id": "dimensions_where_relevant",
-                "rule_no": "Rule 6(1)(g)",
+                "rule_no": "Rule 6(1)(f)",
                 "severity": "MEDIUM",
                 "status": "MISSING",
                 "field": "dimensions",
@@ -601,7 +601,7 @@ INSPECTION_CONFIGS = [
         "violations": [
             {
                 "rule_id": "dimensions_where_relevant",
-                "rule_no": "Rule 6(1)(g)",
+                "rule_no": "Rule 6(1)(f)",
                 "severity": "MEDIUM",
                 "status": "MISSING",
                 "field": "dimensions",

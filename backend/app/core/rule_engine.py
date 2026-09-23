@@ -37,16 +37,16 @@ class RuleEngine:
             "remediation": "Print MRP in Indian Rupees (₹) including all applicable taxes.",
         },
         "consumer_care_details": {
-            "rule_no": "Rule 6(1)(f)",
+            "rule_no": "Rule 6(2)",
             "description": "Consumer care details including name, address, email, and/or phone number must be provided.",
             "severity": "HIGH",
             "remediation": "Add consumer complaint email and/or toll-free phone number on the label.",
         },
         "dimensions_where_relevant": {
-            "rule_no": "Rule 6(1)(g)",
-            "description": "Dimensions (length, width, height) must be declared for non-edible commodities sold by dimensions (e.g. garments, cables, electronics). Commodities sold by count (N/nos/pcs) or by weight/volume are exempt; edible products are exempt.",
+            "rule_no": "Rule 6(1)(f)",
+            "description": "Dimensions (length, width, height) must be declared where the sizes of the commodity are relevant (operationalized: non-edible commodities sold by length or area, e.g. garments, cables, electronics). Commodities sold by count (N/nos/pcs) or by weight/volume are exempt; edible products are exempt.",
             "severity": "MEDIUM",
-            "remediation": "Declare dimensions in cm/inches for non-edible commodities sold by length, area or volume.",
+            "remediation": "Declare dimensions in cm/inches for non-edible commodities sold by length or area.",
         },
     }
 

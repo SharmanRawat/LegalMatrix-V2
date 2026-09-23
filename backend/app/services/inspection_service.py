@@ -768,8 +768,8 @@ def _store_evidence(image_paths: List[str]) -> List[Dict]:
 
 
 def _dimensions_relevant(decl: Dict) -> bool:
-    """Rule 6(1)(g): dimensions are required only for non-edible commodities
-    sold by dimensions (garments, cables, electronics, etc.)."""
+    """Rule 6(1)(f): dimensions are required only where the sizes of the commodity
+    are relevant — operationalized as non-edible commodities sold by length/area."""
     edible = str(decl.get("edible", "") or "").strip().lower()
     if edible not in ("no", "false", "n", "non_edible", "non-edible", "non edible"):
         return False

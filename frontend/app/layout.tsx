@@ -26,7 +26,7 @@ const ibmPlexSansDevanagari = IBM_Plex_Sans_Devanagari({
 })
 
 export const metadata: Metadata = {
-  title: 'MetrIQ — Legal Metrology Inspection',
+  title: 'LegalMatrix — Legal Metrology Inspection',
   description: 'AI-powered compliance inspection for packaged commodities',
   manifest: '/manifest.json',
 }

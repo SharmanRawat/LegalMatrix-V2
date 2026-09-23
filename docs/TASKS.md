@@ -1,7 +1,7 @@
 # TASKS — where we are, what is next, how to parallelise
 
 > **PROJECT BACKGROUND (read before anything else):**
-> LegalMatrix (MetrIQ) — SIH 2026 Problem Statement **PS 26034** (Ministry of
+> LegalMatrix — SIH 2026 Problem Statement **PS 26034** (Ministry of
 > Consumer Affairs, Dept. of Consumer Affairs): a field inspector photographs a
 > packaged-food label with a phone; the platform extracts the statutory
 > declarations (MRP, USP, net qty, name, manufacturer, mfg/exp dates, consumer

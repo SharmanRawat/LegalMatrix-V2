@@ -12,7 +12,7 @@ praise. Challenge our assumptions and give us the strongest defensible design.
 
 CONTEXT — what we are building
 --------------------------------
-"LegalMatrix / MetrIQ" (SIH 2026, Problem Statement 26034): a field app used by Indian Legal
+"LegalMatrix" (SIH 2026, Problem Statement 26034): a field app used by Indian Legal
 Metrology inspectors to check packaged goods labels for compliance with the Packaged Commodities
 Rules. Flow: inspector photographs a product label with a phone (2-4 photos/product) -> FastAPI
 backend -> Qwen2.5-VL 7B via local Ollama extracts structured declarations (mrp, net_quantity,

@@ -1,4 +1,4 @@
-# PRD — LegalMatrix (MetrIQ), SIH PS 26034
+# PRD — LegalMatrix, SIH PS 26034
 
 > Problem Statement 26034, Ministry of Consumer Affairs, Food & Public Distribution,
 > Department of Consumer Affairs (DoCA), Category Software.

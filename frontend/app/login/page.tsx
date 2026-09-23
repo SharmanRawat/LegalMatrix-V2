@@ -106,7 +106,7 @@ export default function LoginPage() {
               <Shield className="w-6 h-6 text-brand-navy" />
             </span>
             <div>
-              <p className="text-xl font-bold tracking-tight">MetrIQ</p>
+              <p className="text-xl font-bold tracking-tight">LegalMatrix</p>
               <p className="text-[11px] text-white/60 uppercase tracking-widest">
                 Legal Metrology
               </p>
@@ -158,7 +158,7 @@ export default function LoginPage() {
             <Shield className="w-6 h-6 text-accent" />
           </span>
           <div>
-            <p className="text-lg font-bold text-brand-navy tracking-tight">MetrIQ</p>
+            <p className="text-lg font-bold text-brand-navy tracking-tight">LegalMatrix</p>
             <p className="text-[10px] text-text-muted uppercase tracking-widest">
               Legal Metrology
             </p>

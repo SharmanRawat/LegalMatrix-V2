@@ -51,7 +51,7 @@ export function MobileLogo() {
   return (
     <Link href="/dashboard" className="sm:hidden flex items-center gap-2 px-4 h-12">
       <Shield className="w-5 h-5 text-accent-bright" />
-      <span className="text-sm font-bold text-white tracking-tight">MetrIQ</span>
+      <span className="text-sm font-bold text-white tracking-tight">LegalMatrix</span>
       <span className="text-[9px] text-white/60 uppercase tracking-wider border-l border-white/20 pl-2">
         Legal Metrology
       </span>

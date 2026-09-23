@@ -2,7 +2,7 @@ import { Suspense } from 'react'
 import VerifyClient from './verify-client'
 
 export const metadata = {
-  title: 'Certificate Verification · MetrIQ',
+  title: 'Certificate Verification · LegalMatrix',
 }
 
 export default function VerifyPage() {

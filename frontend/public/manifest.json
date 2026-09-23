@@ -1,6 +1,6 @@
 {
-  "name": "MetrIQ — Legal Metrology Inspection",
-  "short_name": "MetrIQ",
+  "name": "LegalMatrix — Legal Metrology Inspection",
+  "short_name": "LegalMatrix",
   "description": "AI-powered compliance inspection for packaged commodities",
   "start_url": "/",
   "display": "standalone",

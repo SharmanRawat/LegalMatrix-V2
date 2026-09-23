@@ -14,8 +14,8 @@ effective 2023-04-01). Rule text → `core/rule_engine.py::RULE_DETAILS` +
 | 3 | Rule 6(1)(c) | `net_quantity` | `net_quantity` | CRITICAL | Numeric + SI unit (`g/kg/ml/L`, `cm/m` for length); liquids at 20 °C |
 | 4 | Rule 6(1)(d) | `month_year_manufacture` | `manufacturing_date` | HIGH | Month + year (`MMM/YYYY`, `MM/YYYY`, `MM/YY`); code checks for a 4-digit year or `MM/YY` pattern |
 | 5 | Rule 6(1)(e) | `mrp` | `mrp` | CRITICAL | `MRP Rs.XX / MRP ₹XX`, inclusive of all taxes; must contain digit + (`₹` or `Rs.` or `INR`) unless visually verified |
-| 6 | Rule 6(1)(f) | `consumer_care_details` | `consumer_care` | HIGH | Name+address+email and/or phone; pipeline additionally requires a contact channel (`@`, `toll free`, `1800`, 10-digit) or the field counts as missing |
-| 7 | Rule 6(1)(g) | `dimensions_where_relevant` | `dimensions` | MEDIUM | Only when product is non-edible sold by dimensions (garments, cables, electronics). `edible=no` → required; else skipped |
+| 6 | Rule 6(2) | `consumer_care_details` | `consumer_care` | HIGH | Name+address+email and/or phone; pipeline additionally requires a contact channel (`@`, `toll free`, `1800`, 10-digit) or the field counts as missing |
+| 7 | Rule 6(1)(f) | `dimensions_where_relevant` | `dimensions` | MEDIUM | Only when product is non-edible sold by dimensions (garments, cables, electronics). `edible=no` → required; else skipped |
 
 Missing → violation `status=MISSING`. Present-but-malformed → `FORMAT_ISSUE`
 (severity MEDIUM by default). Score = `passed/7*100` (dimensions counts only when relevant).

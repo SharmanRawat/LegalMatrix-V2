@@ -51,7 +51,7 @@ export default function Navbar() {
         <Link href="/dashboard" className="flex items-center gap-2.5 shrink-0">
           <Shield className="w-5 h-5 text-accent-bright" />
           <span className="text-base font-bold text-white tracking-tight">
-            MetrIQ
+            LegalMatrix
           </span>
           <span className="hidden lg:block text-[10px] text-white/60 uppercase tracking-wider border-l border-white/20 pl-2">
             Legal Metrology

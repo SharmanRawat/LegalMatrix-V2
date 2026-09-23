@@ -296,7 +296,7 @@ def _merge_classifiers(llm: Dict, regex: Dict, lines: List[Dict]) -> Dict:
             llm_fields[key] = ""
             merged_map.pop(key, None)
 
-    # Dimensions are only meaningful for non-edible commodities (rule 6(1)(g) —
+    # Dimensions are only meaningful where sizes are relevant (Rule 6(1)(f) —
     # see inspection_service._dimensions_relevant).  Drop any value the LLM
     # invented for edible products.
     edible = str(llm_fields.get("edible", "") or "").strip().lower()

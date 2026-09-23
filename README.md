@@ -1,4 +1,4 @@
-# LegalMatrix (MetrIQ)
+# LegalMatrix
 
 **AI-powered Legal Metrology compliance inspection for packaged commodities** — SIH 2026
 Problem Statement **PS 26034** (Ministry of Consumer Affairs, Food & Public Distribution,
