@@ -1,158 +1,49 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import {
-  Camera, Upload, Shield, CheckCircle, AlertCircle,
-  Clock, X, Download, Scan, AlertTriangle, Pencil, Save, FileText,
+  Camera, Upload, X, Scan, CheckCircle2, Loader2, ScanLine, FileText, Ruler, FileCheck2,
+  Tag, ClipboardList, Package, ArrowUpFromLine, Paperclip,
+  type LucideIcon,
 } from 'lucide-react'
 import toast, { Toaster } from 'react-hot-toast'
-import Navbar from '@/app/components/Navbar'
-import RadarChart from '@/app/components/RadarChart'
-import { api, apiError, downloadBlob, getUser } from '@/app/lib/api'
-import type { HeatmapInfo, RadarResult, SessionUser } from '@/app/lib/api'
-import { useI18n } from '@/app/lib/i18n'
+import AppShell from '@/app/components/AppShell'
+import Card from '@/app/components/ui/Card'
+import { api, apiError } from '@/app/lib/api'
 
 type LabelType = 'front' | 'back' | 'side' | 'top' | 'other'
 
-const LABEL_TYPES: { id: LabelType; label: string; desc: string }[] = [
-  { id: 'front', label: 'Front Label (PDP)', desc: 'Brand face & product name — strongest source for the name' },
-  { id: 'back', label: 'Back Label (Declarations)', desc: 'MRP, net qty, manufacturer, dates, consumer care' },
-  { id: 'side', label: 'Side Label', desc: 'Side panel: nutrition / extra dates / care' },
-  { id: 'top', label: 'Top / Cap Label', desc: 'Cap or roof face: batch no, use-by, MRP/USP (EVEREST-style packs)' },
-  { id: 'other', label: 'Other Packaging', desc: 'Seals, pack shots, barcodes' },
+const LABEL_TYPES: { id: LabelType; label: string; desc: string; icon: LucideIcon }[] = [
+  { id: 'front', label: 'Front Label (PDP)', desc: 'Brand face & product name', icon: Tag },
+  { id: 'back', label: 'Back Label', desc: 'MRP, net qty, manufacturer', icon: ClipboardList },
+  { id: 'side', label: 'Side Label', desc: 'Nutrition / extra dates', icon: Package },
+  { id: 'top', label: 'Top / Cap Label', desc: 'Batch no, use-by, MRP', icon: ArrowUpFromLine },
+  { id: 'other', label: 'Other Packaging', desc: 'Seals, barcodes', icon: Paperclip },
 ]
 
 const MAX_IMAGES = 6
 
-interface Violation {
-  rule_id: string
-  rule_no: string
-  severity: string
-  status: string
-  field: string
-  extracted_value: string
-  description: string
-  remediation: string
-}
-
-interface MisleadingCheck {
-  check: string
-  severity: string
-  detail: string
-  extracted_value?: string
-}
-
-interface InspectionResult {
-  inspection_id: string
-  timestamp?: string
-  method?: string
-  images_processed: number
-  status: string
-  declarations: {
-    mrp: string | null
-    usp: string | null
-    net_quantity: string | null
-    product_name: string | null
-    manufacturer: string | null
-    manufacturer_address?: string | null
-    manufacturing_date: string | null
-    expiry_date: string | null
-    consumer_care: string | null
-    dimensions: string | null
-    edible: string | null
-  }
-  manual_overrides?: Record<string, { original: string; corrected: string }>
-  extraction_confidence?: {
-    overall: number
-    coverage_ratio: number
-    fields_present: number
-    fields_required: number
-  }
-  missing_declarations: string[]
-  compliance_score: number
-  passed_count: number
-  total_rules: number
-  violations: Violation[]
-  misleading_checks?: MisleadingCheck[]
-  /** Display-only raw-OCR transcript: per-image reads (incl. low-confidence)
-   * surfaced for transparency. Never feeds field extraction. */
-  ocr_transcript?: Array<{
-    filename: string
-    count: number
-    low_conf: number
-    text: string
-  }>
-  font_measurement?: {
-    status: string
-    measured_mm: number | null
-    uncertainty: number | null
-    required_mm: number | null
-    calibration?: string | null
-    ppm?: number | null
-    method?: string | null
-    calibration_rejected_reason?: string | null
-    box_rejected_reason?: string | null
-    implausible?: boolean
-    image_index?: number | null
-  } | null
-  compliance_radar?: RadarResult | null
-  grade?: string
-  heatmaps?: HeatmapInfo[]
-  evidence?: {
-    hash: string
-  }
-  message?: string
-}
-
-/** One emitted stage event from the live pipeline log (POST /api/inspect with
- * an X-Progress-Token, polled at GET /api/inspect/progress/{token}). */
-interface ProgressEvent {
-  stage: 'upload' | 'start' | 'extract' | 'ocr' | 'slm' | 'merge' |
-          'compliance' | 'font' | 'evidence' | 'done' | string
-  status?: string
-  ts?: number
-  images?: number
-  image?: number | string
-  total?: number
-  file?: string
-  lines?: number
-  fields_found?: number
-  classifier?: string
-  confidence?: number
-  missing?: number
-  passed?: number
-  total_rules?: number
-  measured?: string
-  heatmaps?: number
-  inspection_id?: string
-  score?: number
-  reason?: string
-}
+const ANALYZE_STEPS: { label: string; desc: string; Icon: LucideIcon }[] = [
+  { label: 'Uploading photos', desc: 'Validating images and format', Icon: Upload },
+  { label: 'Reading label fields', desc: 'OCR extraction of declarations', Icon: ScanLine },
+  { label: 'Verifying rules', desc: 'Checking against Legal Metrology rules', Icon: FileText },
+  { label: 'Measuring font size', desc: 'Readability and dimensions', Icon: Ruler },
+  { label: 'Finalizing report', desc: 'Scoring and evidence pack', Icon: FileCheck2 },
+]
 
 export default function Home() {
-  const { t, tStatus } = useI18n()
+  const router = useRouter()
   const [selectedImages, setSelectedImages] = useState<File[]>([])
   const [imageTypes, setImageTypes] = useState<LabelType[]>([])
   const [imagePreviews, setImagePreviews] = useState<string[]>([])
   const [captureTarget, setCaptureTarget] = useState<LabelType>('front')
   const [loading, setLoading] = useState(false)
   const [elapsed, setElapsed] = useState(0)
-  const [result, setResult] = useState<InspectionResult | null>(null)
-  const [progressEvents, setProgressEvents] = useState<ProgressEvent[]>([])
-  const [downloadingPdf, setDownloadingPdf] = useState(false)
-  const [downloadingCert, setDownloadingCert] = useState(false)
-  const [heatmapUrls, setHeatmapUrls] = useState<string[]>([])
   const [cameraActive, setCameraActive] = useState(false)
   const [sameProduct, setSameProduct] = useState(false)
   const [viewingPreview, setViewingPreview] = useState<number | null>(null)
-  const [drafts, setDrafts] = useState<Record<string, string>>({})
-  const [editing, setEditing] = useState<Record<string, boolean>>({})
-  const [savingFields, setSavingFields] = useState<Record<string, boolean>>({})
-  const user: SessionUser | null = getUser()
-  const canEdit = !!user && (user.role === 'ADMIN' || user.role === 'INSPECTOR')
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const progressPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -168,7 +59,6 @@ export default function Home() {
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current)
-      if (progressPollRef.current) clearInterval(progressPollRef.current)
       stopCamera()
     }
   }, [])
@@ -187,10 +77,10 @@ export default function Home() {
           videoRef.current.play()
         }
       }, 100)
-} catch (err: unknown) {
+    } catch (err: unknown) {
       console.error('Camera access failed:', err)
-      toast.error(t('Camera access denied. Use file upload instead.'))
-  }
+      toast.error('Camera access denied. Use file upload instead.')
+    }
   }
 
   const createPreview = (file: File, onDone: (dataUrl: string) => void) => {
@@ -235,7 +125,7 @@ export default function Home() {
       if (!blob) return
       const file = new File([blob], `capture_${Date.now()}.jpg`, { type: 'image/jpeg' })
       if (selectedImages.length >= MAX_IMAGES) {
-        toast.error(t('Maximum {n} images allowed', { n: MAX_IMAGES }))
+        toast.error(`Maximum ${MAX_IMAGES} images allowed`)
         return
       }
       const newImages = [...selectedImages, file]
@@ -251,10 +141,7 @@ export default function Home() {
         })
       })
       toast.success(
-        t('Photo {n} captured for {label}', {
-          n: newImages.length,
-          label: t(LABEL_TYPES.find((lt) => lt.id === captureTarget)?.label ?? captureTarget),
-        }),
+        `Photo ${newImages.length} captured for ${LABEL_TYPES.find(t => t.id === captureTarget)?.label ?? captureTarget}`,
       )
     }, 'image/jpeg', 0.92)
   }
@@ -263,7 +150,7 @@ export default function Home() {
     const files = Array.from(e.target.files || [])
     if (files.length === 0) return
     if (selectedImages.length + files.length > MAX_IMAGES) {
-      toast.error(t('Maximum {n} images allowed', { n: MAX_IMAGES }))
+      toast.error(`Maximum ${MAX_IMAGES} images allowed`)
       return
     }
 
@@ -275,7 +162,7 @@ export default function Home() {
     files.forEach((file, j) => {
       const idx = imagePreviews.length + j
       createPreview(file, (dataUrl) => {
-        if (!dataUrl) toast.error(t("Couldn't preview \"{name}\" (unsupported image format?)", { name: file.name }))
+        if (!dataUrl) toast.error(`Couldn't preview "${file.name}"`)
         setImagePreviews(prev => {
           const next = [...prev]
           next[idx] = dataUrl
@@ -295,271 +182,43 @@ export default function Home() {
 
   const handleUpload = async () => {
     if (selectedImages.length === 0) {
-      toast.error(t('Please select or capture at least one image'))
+      toast.error('Please select or capture at least one image')
       return
     }
 
     setLoading(true)
-    setResult(null)
-    setDrafts({})
-    setEditing({})
-    setSavingFields({})
     setElapsed(0)
-    setProgressEvents([])
 
     if (timerRef.current) clearInterval(timerRef.current)
     timerRef.current = setInterval(() => setElapsed(s => s + 1), 1000)
-
-    // Live pipeline log: tag the POST with a pollable progress token and
-    // stream its OCR → SLM → rules → evidence stages into the UI.
-    const progressToken =
-      typeof crypto !== 'undefined' && 'randomUUID' in crypto
-        ? crypto.randomUUID()
-        : `lm-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-
-    if (progressPollRef.current) clearInterval(progressPollRef.current)
-    progressPollRef.current = setInterval(async () => {
-      try {
-        const resp = await api.get(`/api/inspect/progress/${progressToken}`, { timeout: 15000 })
-        const events = (resp.data?.events as ProgressEvent[] | undefined) ?? []
-        if (events.length) setProgressEvents(events)
-      } catch {
-        // transient poll error — the next tick retries
-      }
-    }, 1500)
 
     const formData = new FormData()
     selectedImages.forEach(image => formData.append('images', image))
     imageTypes.forEach(type => formData.append('label_types', type))
 
     try {
-      const response = await api.post('/api/inspect', formData, {
-        timeout: 600000,
-        headers: { 'X-Progress-Token': progressToken },
-      })
-      setResult(response.data)
-      toast.success(t('Inspection completed!'))
-      if (response.data?.inspection_id && response.data?.heatmaps?.length) {
-        const urls = await Promise.all(
-          (response.data.heatmaps as HeatmapInfo[]).map(async (h) => {
-            try {
-              const resp = await api.get(`/api/inspect/${response.data.inspection_id}/heatmap/${h.image_index}`, {
-                responseType: 'blob',
-                timeout: 60000,
-              })
-              return window.URL.createObjectURL(resp.data)
-            } catch {
-              return ''
-            }
-          }),
-        )
-        setHeatmapUrls(urls)
+      const response = await api.post('/api/inspect', formData, { timeout: 600000 })
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+      toast.success('Inspection completed!')
+      if (response.data?.inspection_id) {
+        router.push(`/inspection/${response.data.inspection_id}`)
+        return
       }
+      toast.error('Inspection completed but no report ID was returned.')
+      setLoading(false)
     } catch (error: unknown) {
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
       console.error('Error:', error)
       const msg =
         (error as { code?: string } | null)?.code === 'ECONNABORTED'
-          ? t('Request timed out. The vision model can take several minutes.')
-          : apiError(error, t('Failed to inspect images.'))
+          ? 'Request timed out. The vision model can take several minutes.'
+          : apiError(error, 'Failed to inspect images.')
       toast.error(msg)
-    } finally {
-      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
-      if (progressPollRef.current) { clearInterval(progressPollRef.current); progressPollRef.current = null }
       setLoading(false)
     }
   }
 
-  const startEdit = (key: string) => {
-    setEditing((prev) => ({ ...prev, [key]: true }))
-    setDrafts((prev) => ({
-      ...prev,
-      [key]: (result?.declarations as Record<string, string | null> | undefined)?.[key] ?? '',
-    }))
-  }
-
-  const cancelEdit = (key: string) => {
-    setEditing((prev) => ({ ...prev, [key]: false }))
-    setDrafts((prev) => {
-      const next = { ...prev }
-      delete next[key]
-      return next
-    })
-  }
-
-  const saveField = async (key: string) => {
-    if (!result) return
-    const value = (drafts[key] ?? '').trim()
-    const current = (result.declarations as Record<string, string | null>)[key] ?? ''
-    if (value === (current ?? '')) {
-      cancelEdit(key)
-      return
-    }
-    setSavingFields((prev) => ({ ...prev, [key]: true }))
-    try {
-      const { data: updated } = await api.patch(`/api/inspect/${result.inspection_id}`, {
-        overrides: { [key]: value },
-      })
-      setResult((prev) =>
-        prev
-          ? {
-              ...prev,
-              declarations: updated.declarations ?? prev.declarations,
-              missing_declarations: updated.missing_declarations ?? prev.missing_declarations,
-              status: updated.status ?? prev.status,
-              compliance_score: updated.compliance_score ?? prev.compliance_score,
-              passed_count: updated.passed_count ?? prev.passed_count,
-              total_rules: updated.total_rules ?? prev.total_rules,
-              violations: updated.violations ?? prev.violations,
-              misleading_checks: updated.misleading_checks ?? prev.misleading_checks,
-              compliance_radar: updated.compliance_radar ?? prev.compliance_radar,
-              grade: updated.grade ?? prev.grade,
-              manual_overrides: updated.manual_overrides ?? prev.manual_overrides,
-            }
-          : prev,
-      )
-      setEditing((prev) => ({ ...prev, [key]: false }))
-      setDrafts((prev) => {
-        const next = { ...prev }
-        delete next[key]
-        return next
-      })
-      toast.success(t('{field} corrected — score recalculated', { field: FIELD_LABELS[key] ?? key }))
-    } catch (err) {
-      toast.error(apiError(err, t('Failed to save correction')))
-    } finally {
-      setSavingFields((prev) => ({ ...prev, [key]: false }))
-    }
-  }
-
-  const handleDownloadPdf = async () => {
-    if (!result) return
-    setDownloadingPdf(true)
-    try {
-      await downloadBlob(
-        `/api/inspect/${result.inspection_id}/report`,
-        `LegalMatrix-Report-${result.inspection_id}.pdf`,
-      )
-      toast.success(t('PDF report downloaded!'))
-    } catch (err) {
-      console.error('PDF download failed:', err)
-      toast.error(t('Failed to download PDF report'))
-    } finally {
-      setDownloadingPdf(false)
-    }
-  }
-
-  const handleDownloadCertificate = async () => {
-    if (!result) return
-    setDownloadingCert(true)
-    try {
-      await downloadBlob(
-        `/api/inspect/${result.inspection_id}/certificate`,
-        `LegalMatrix-Certificate-${result.inspection_id}.pdf`,
-      )
-      toast.success(t('Certificate downloaded!'))
-    } catch (err) {
-      console.error('Certificate download failed:', err)
-      toast.error(t('Failed to download certificate'))
-    } finally {
-      setDownloadingCert(false)
-    }
-  }
-
-  const FIELD_LABELS: Record<string, string> = {
-    usp: t('Unit Sale Price'),
-    mrp: t('MRP'),
-    net_quantity: t('Net Quantity'),
-    product_name: t('Product Name'),
-    manufacturer: t('Manufacturer'),
-    manufacturer_address: t('Manufacturer Address'),
-    manufacturing_date: t('Manufacturing Date'),
-    expiry_date: t('Expiry Date'),
-    consumer_care: t('Consumer Care'),
-    dimensions: t('Dimensions'),
-    edible: t('Edibility (food?)'),
-  }
-
-  const getScoreColor = (score: number) => {
-    if (score >= 80) return 'text-green-600'
-    if (score >= 50) return 'text-yellow-600'
-    return 'text-red-600'
-  }
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'COMPLIANT': return 'text-green-600 bg-green-50 border-green-200'
-      case 'REVIEW_REQUIRED': return 'text-yellow-600 bg-yellow-50 border-yellow-200'
-      case 'POTENTIAL_VIOLATION': return 'text-red-600 bg-red-50 border-red-200'
-      default: return 'text-gray-600 bg-gray-50 border-gray-200'
-    }
-  }
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'COMPLIANT': return <CheckCircle className="w-6 h-6 text-green-600" />
-      case 'REVIEW_REQUIRED': return <Clock className="w-6 h-6 text-yellow-600" />
-      case 'POTENTIAL_VIOLATION': return <AlertCircle className="w-6 h-6 text-red-600" />
-      default: return null
-    }
-  }
-
-  const getSeverityStyle = (sev: string) => {
-    switch (sev) {
-      case 'CRITICAL': return 'bg-red-100 text-red-800 border-red-300'
-      case 'HIGH': return 'bg-orange-100 text-orange-800 border-orange-300'
-      case 'MEDIUM': return 'bg-yellow-100 text-yellow-800 border-yellow-300'
-      default: return 'bg-gray-100 text-gray-600 border-gray-300'
-    }
-  }
-
-  const score = result?.compliance_score ?? 0
-  const circumference = 2 * Math.PI * 45
-  const dashoffset = circumference - (score / 100) * circumference
-
-  // Live pipeline log — human-readable text for each emitted stage event.
-  const stageText = (e: ProgressEvent): string => {
-    switch (e.stage) {
-      case 'upload':
-        return 'Images received — starting pipeline…'
-      case 'start':
-        return `Pipeline started — ${e.images ?? 0} image(s) queued`
-      case 'ocr':
-        if (e.status === 'running') return `OCR — scanning text blocks on ${e.image ?? ''}…`
-        if (e.status === 'multi_pass') return `OCR — re-scanning degraded digits (${e.lines ?? 0} blocks)`
-        return `OCR — read ${e.lines ?? 0} text blocks on ${e.image ?? ''}`
-      case 'slm':
-        if (e.status === 'running') return 'SLM classifier — mapping text to 10 legal fields…'
-        if (e.status === 'regex_fallback') return 'SLM unavailable — regex fallback used'
-        return `SLM classifier — fields mapped (${e.classifier ?? 'llm+regex'})`
-      case 'extract':
-        if (e.status === 'running') return `Image ${e.image}/${e.total} — extracting (${e.file ?? ''})…`
-        return `Image ${e.image}/${e.total} — OCR ${e.lines ?? 0} blocks · SLM ${e.fields_found ?? 0}/10 fields (${e.classifier ?? ''})`
-      case 'merge':
-        return `Merged ${e.fields_found ?? 0}/10 fields · ${e.missing ?? 0} missing`
-      case 'compliance':
-        if (e.status === 'running') return 'Applying legal-metrology rule engine…'
-        return `Rule engine — ${e.passed ?? 0}/${e.total_rules ?? 0} rules passed`
-      case 'font':
-        if (e.status === 'running') return 'Measuring font height vs the legal minimum…'
-        return `Font measurement — ${e.measured ?? 'done'}`
-      case 'evidence':
-        if (e.status === 'running') return 'Rendering heat-maps & storing evidence…'
-        return `Evidence — ${e.heatmaps ?? 0} heat-map(s) rendered`
-      case 'done':
-        return `Complete — ${e.inspection_id ?? ''} · ${e.status ?? ''} · score ${e.score ?? 0}%`
-      default:
-        return e.stage
-    }
-  }
-
-  const statusDot = (e: ProgressEvent): string => {
-    if (e.stage === 'done' || e.status === 'done') return 'bg-green-500'
-    if (e.status === 'running') return 'bg-blue-500 animate-pulse'
-    if (e.status === 'regex_fallback') return 'bg-amber-500'
-    return 'bg-gray-300'
-  }
-
-  // Per-label-type bookkeeping over the flat image list (order = append order).
+  // Per-label-type bookkeeping
   const counts: Record<LabelType, number> = { front: 0, back: 0, side: 0, top: 0, other: 0 }
   imageTypes.forEach((t) => { counts[t] = (counts[t] || 0) + 1 })
   const totalImages = selectedImages.length
@@ -572,677 +231,324 @@ export default function Home() {
     return { start: 0, len: 0 }
   }
 
+  // Analyzing checklist — advances roughly every 30s of processing time
+  const activeStep = loading
+    ? Math.min(ANALYZE_STEPS.length - 1, Math.floor(elapsed / 30))
+    : -1
+
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Navbar />
-      <div className="max-w-4xl mx-auto p-4 sm:p-6">
+    <AppShell>
       <Toaster position="top-right" />
+      <div className="max-w-md sm:max-w-lg lg:max-w-2xl mx-auto px-4 py-6 space-y-5">
+        {/* Header */}
+        <header className="text-center">
+          <h1 className="text-xl font-bold text-text-primary tracking-tight">
+            New Inspection
+          </h1>
+          <p className="text-sm text-text-secondary mt-1">
+            Photograph the product labels for AI compliance analysis
+          </p>
+        </header>
 
-      <header className="text-center mb-8">
-        <div className="flex items-center justify-center gap-3 mb-2">
-          <Shield className="w-8 h-8 text-blue-600" />
-          <h1 className="text-3xl font-bold text-gray-900">LegalMatrix</h1>
-        </div>
-        <p className="text-gray-600">{t('AI-Powered Legal Metrology Inspection')}</p>
-      </header>
-
-      {/* Upload / Capture Section */}
-      <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
-        <h2 className="text-lg font-semibold text-gray-800 mb-1">{t('Capture or Upload Product Images')}</h2>
-        <p className="text-sm text-gray-500 mb-4">
-          {t('Add photos per label type (up to {max} total · {added} added). The inspection routes each field to the right photo — product name from the front, declarations from the back.', { max: MAX_IMAGES, added: totalImages })}
-        </p>
-
-        {/* Camera View */}
-        {cameraActive && (
-          <div className="mb-4 rounded-lg overflow-hidden border border-gray-300 relative">
-            <div className="absolute top-3 left-0 right-0 flex justify-center">
-              <span className="bg-black/70 text-white text-xs font-semibold px-3 py-1 rounded-full">
-                {t('Capturing for:')} {t(LABEL_TYPES.find((lt) => lt.id === captureTarget)?.label ?? captureTarget)}
-              </span>
+        {/* Upload / Capture Section */}
+        <Card>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-sm font-semibold text-text-primary">
+                Product Photos
+              </h2>
+              <p className="text-xs text-text-secondary mt-0.5">
+                Capture or upload up to {MAX_IMAGES} images
+              </p>
             </div>
-            <video ref={videoRef} className="w-full max-h-[400px] object-contain bg-black" autoPlay playsInline muted />
-            <canvas ref={canvasRef} className="hidden" />
-            <div className="absolute bottom-3 left-0 right-0 flex justify-center gap-3">
-              <button
-                onClick={capturePhoto}
-                className="px-6 py-3 bg-green-600 text-white rounded-full hover:bg-green-700 shadow-lg flex items-center gap-2 font-semibold"
-              >
-                <Camera className="w-5 h-5" /> {t('Capture')}
-              </button>
-              <button
-                onClick={stopCamera}
-                className="px-4 py-3 bg-gray-700 text-white rounded-full hover:bg-gray-800 shadow-lg flex items-center gap-2"
-              >
-                <X className="w-5 h-5" /> {t('Close')}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Per-label-type capture cards */}
-        <div className="space-y-3">
-          {LABEL_TYPES.map((lt) => {
-            const { start, len } = typeRange(lt.id)
-            return (
-              <div
-                key={lt.id}
-                className={`border rounded-xl p-4 transition-colors ${
-                  len > 0 ? 'border-blue-300 bg-blue-50/50' : 'border-gray-200 bg-white'
+            <div className="flex items-center gap-1.5 text-xs text-text-muted">
+              <span
+                className={`mono font-semibold ${
+                  totalImages > 0 ? 'text-accent' : 'text-text-muted'
                 }`}
               >
-                <div className="flex items-start justify-between gap-3 flex-wrap">
-                  <div>
-                    <h3 className="text-sm font-semibold text-gray-800">{t(lt.label)}</h3>
-                    <p className="text-xs text-gray-500">{t(lt.desc)}</p>
-                    <p className={`text-xs mt-0.5 ${len > 0 ? 'text-blue-600 font-medium' : 'text-gray-400'}`}>
-                      {len} {t(len !== 1 ? 'photos' : 'photo')}
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    {!cameraActive && (
-                      <button
-                        onClick={() => startCamera(lt.id)}
-                        className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-xs flex items-center gap-1.5 font-semibold"
-                      >
-                        <Camera className="w-4 h-4" /> {t('Capture')}
-                      </button>
-                    )}
-                    <label className="cursor-pointer">
-                      <div className="px-3 py-2 border border-gray-300 bg-white text-gray-700 rounded-lg hover:border-blue-500 hover:text-blue-600 text-xs flex items-center gap-1.5 font-semibold">
-                        <Upload className="w-4 h-4" /> {t('Upload')}
+                {totalImages}
+              </span>
+              <span>/</span>
+              <span className="mono">{MAX_IMAGES}</span>
+            </div>
+          </div>
+
+          {/* Progress indicator */}
+          <div className="h-1.5 bg-surface-hover rounded-full overflow-hidden mb-5">
+            <div
+              className="h-full bg-accent rounded-full transition-all duration-300"
+              style={{ width: `${(totalImages / MAX_IMAGES) * 100}%` }}
+              role="progressbar"
+              aria-valuenow={totalImages}
+              aria-valuemax={MAX_IMAGES}
+              aria-label={`${totalImages} of ${MAX_IMAGES} images uploaded`}
+            />
+          </div>
+
+          {/* Camera View */}
+          {cameraActive && (
+            <div className="mb-5 rounded-xl overflow-hidden border border-surface-border relative bg-black">
+              <div className="absolute top-3 left-0 right-0 flex justify-center z-10">
+                <span className="bg-black/70 text-white text-xs font-semibold px-3 py-1 rounded-full">
+                  Capturing: {LABEL_TYPES.find(t => t.id === captureTarget)?.label}
+                </span>
+              </div>
+              <video ref={videoRef} className="w-full max-h-[400px] object-contain" autoPlay playsInline muted />
+              <canvas ref={canvasRef} className="hidden" />
+              <div className="absolute bottom-3 left-0 right-0 flex justify-center gap-3 z-10">
+                <button
+                  onClick={capturePhoto}
+                  className="btn-success btn-pill"
+                >
+                  <Camera className="w-5 h-5" /> Capture
+                </button>
+                <button
+                  onClick={stopCamera}
+                  className="btn-secondary btn-pill"
+                >
+                  <X className="w-5 h-5" /> Close
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Label type cards */}
+          <div className="space-y-3">
+            {LABEL_TYPES.map((lt, ltIndex) => {
+              const { start, len } = typeRange(lt.id)
+              const TypeIcon = lt.icon
+              return (
+                <div
+                  key={lt.id}
+                  className={`rounded-xl p-4 transition-all border animate-reveal ${
+                    len > 0
+                      ? 'border-accent/30 bg-accent-soft/60'
+                      : 'border-surface-border bg-surface hover:bg-surface-hover hover:border-accent/35'
+                  }`}
+                  style={{ animationDelay: `${ltIndex * 50}ms` }}
+                >
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="flex items-start gap-3 min-w-0">
+                      <span className="flex items-center justify-center w-10 h-10 rounded-xl bg-surface border border-surface-border shrink-0">
+                        <TypeIcon className="w-5 h-5 text-accent" aria-hidden="true" />
+                      </span>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-sm font-semibold text-text-primary">{lt.label}</h3>
+                          {len > 0 && (
+                            <span className="inline-flex items-center justify-center min-w-5 h-5 px-1 rounded-full bg-accent text-white text-[10px] font-bold mono">
+                              {len}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-text-muted mt-0.5">{lt.desc}</p>
                       </div>
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                      {!cameraActive && (
+                        <button
+                          onClick={() => startCamera(lt.id)}
+                          className="btn-success-soft btn-sm"
+                        >
+                          <Camera className="w-4 h-4" /> Capture
+                        </button>
+                      )}
                       <input
+                        id={`upload-${lt.id}`}
                         type="file"
                         accept="image/*"
                         multiple
-                        className="hidden"
-                        onChange={(e) => handleImageSelect(e, lt.id)}
+                        className="peer sr-only"
+                        onChange={(e) => {
+                          handleImageSelect(e, lt.id)
+                          e.target.value = ''
+                        }}
                       />
-                    </label>
+                      <label
+                        htmlFor={`upload-${lt.id}`}
+                        className="btn btn-secondary btn-sm cursor-pointer peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent"
+                      >
+                        <Upload className="w-4 h-4" aria-hidden="true" /> Upload
+                      </label>
+                    </div>
                   </div>
-                </div>
 
-                {len > 0 && (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 mt-3">
-                    {imagePreviews.slice(start, start + len).map((preview, i) => {
-                      const flatIdx = start + i
-                      return (
-                        <div key={flatIdx} className="relative rounded-lg border border-gray-200 overflow-hidden bg-white">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={preview || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect width="200" height="200" fill="%23f3f4f6"/%3E%3Ctext x="100" y="100" font-family="sans-serif" font-size="14" fill="%236b7280" text-anchor="middle" dy=".3em"%3ENo Image%3C/text%3E%3C/svg%3E'}
-                            alt={`${lt.label} photo ${i + 1}`}
-                            title="Click to enlarge and verify"
-                            onClick={() => preview && setViewingPreview(flatIdx)}
-                            className="w-full h-32 object-contain bg-gray-50 cursor-pointer"
-                          />
-                          <span className="absolute top-2 left-2 text-[10px] font-bold px-2 py-0.5 rounded bg-black/60 text-white">
-                            {lt.id} · {i + 1}
-                          </span>
-                          <div className="group absolute inset-0 hover:bg-black/20 transition-all flex items-center justify-center">
+                  {/* Image previews */}
+                  {len > 0 && (
+                    <div className="grid grid-cols-2 gap-3 mt-3">
+                      {imagePreviews.slice(start, start + len).map((preview, i) => {
+                        const flatIdx = start + i
+                        return (
+                          <div key={flatIdx} className="relative rounded-lg border border-surface-border overflow-hidden bg-surface group">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={preview || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect width="200" height="200" fill="%23f0f3f8"/%3E%3Ctext x="100" y="100" font-family="sans-serif" font-size="14" fill="%238792a5" text-anchor="middle" dy=".3em"%3ENo Image%3C/text%3E%3C/svg%3E'}
+                              alt={`${lt.label} photo ${i + 1}`}
+                              onClick={() => preview && setViewingPreview(flatIdx)}
+                              className="w-full h-32 object-contain cursor-pointer"
+                            />
+                            <span className="absolute top-2 left-2 text-[10px] font-bold px-2 py-0.5 rounded bg-black/60 text-white">
+                              {lt.id} · {i + 1}
+                            </span>
                             <button
                               onClick={() => removeImage(flatIdx)}
-                              className="opacity-0 group-hover:opacity-100 transition-opacity bg-red-600 text-white p-1.5 rounded-full"
+                              className="absolute top-2 right-2 bg-danger text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
                               title="Remove image"
                             >
                               <X className="w-3.5 h-3.5" />
                             </button>
                           </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-
-        {loading && (
-          <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50/60 p-4">
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <p className="text-xs font-semibold text-blue-700 flex items-center gap-2">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-600" />
-                </span>
-                {t('Live pipeline')} — OCR → SLM → rules
-              </p>
-              <span className="text-[10px] text-blue-500 font-mono whitespace-nowrap">
-                {progressEvents.length} {t('events')} · {elapsed}s
-              </span>
-            </div>
-            <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
-              {progressEvents.length === 0 && (
-                <p className="text-[11px] text-blue-600/70">{t('Uploading images…')}</p>
-              )}
-              {progressEvents.slice(-10).map((e, i) => (
-                <div key={i} className="flex items-start gap-2 text-[11px] text-gray-700">
-                  <span className={`mt-1.5 h-1.5 w-1.5 rounded-full shrink-0 ${statusDot(e)}`} />
-                  <span className="leading-snug">{stageText(e)}</span>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
-              ))}
-            </div>
+              )
+            })}
           </div>
-        )}
 
-        {/* Same-product confirmation */}
-        {totalImages > 0 && (
-          <label className="mt-4 flex items-start gap-3 bg-blue-50 border border-blue-200 rounded-lg p-4 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={sameProduct}
-              onChange={(e) => setSameProduct(e.target.checked)}
-              className="mt-0.5 w-4 h-4 accent-blue-600"
-            />
-            <span className="text-sm text-gray-800">
-              {t('I confirm all {n} photos show the same product being inspected.', { n: totalImages })}
-              <span className="block text-xs text-gray-500 mt-0.5">
-                {t('Required before analyzing — mixing photos of different products gives a misleading compliance score.')}
-              </span>
-            </span>
-          </label>
-        )}
-
-        {/* Analyze */}
-        <div className="mt-4 flex items-center gap-3 flex-wrap">
-          <button
-            onClick={handleUpload}
-            disabled={totalImages === 0 || loading || !sameProduct}
-            className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 min-w-[140px]"
-          >
-            {loading ? (
-              <>
-                <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
-                {t('Analyzing')}... {elapsed}s
-              </>
-            ) : (
-              <>
-                <Scan className="w-4 h-4" />
-                {t('Analyze')}
-              </>
-            )}
-          </button>
-          {totalImages > 0 && !sameProduct && (
-            <p className="text-xs text-amber-600">{t('Confirm the photos show the same product, then analyze.')}</p>
-          )}
-        </div>
-      </section>
-
-      {/* Results Section */}
-      {result && (
-        <section className="space-y-4">
-          {/* Status + Compliance Score Row */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Status Card */}
-            <div className={`md:col-span-2 rounded-xl border p-6 ${getStatusColor(result.status)}`}>
-              <div className="flex items-center gap-3">
-                {getStatusIcon(result.status)}
+          {/* Analyzing checklist */}
+          {loading && (
+            <div className="mt-5 p-4 rounded-xl bg-bg-secondary border border-surface-border" aria-live="polite">
+              <div className="flex items-center gap-3 mb-2">
+                <Loader2 className="w-5 h-5 text-accent animate-spin shrink-0" />
                 <div>
-                  <h3 className="font-semibold text-lg">{t('Status:')} {tStatus(result.status)}</h3>
-                  <p className="text-sm opacity-80">
-                    {t('ID:')} {result.inspection_id} | {result.images_processed} {t('image(s) processed')}
-                    {result.method && <span className="ml-1">| {t('Model:')} {result.method}</span>}
-                  </p>
+                  <p className="text-sm font-semibold text-text-primary">Analyzing… {elapsed}s</p>
+                  <p className="text-xs text-text-muted">Vision model typically takes 1–3 min per image</p>
                 </div>
               </div>
-            </div>
-
-            {/* Compliance Score Circle */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 flex flex-col items-center justify-center">
-              <svg width="100" height="100" className="transform -rotate-90">
-                <circle cx="50" cy="50" r="45" fill="none" stroke="#e5e7eb" strokeWidth="8" />
-                <circle
-                  cx="50" cy="50" r="45" fill="none"
-                  stroke={score >= 80 ? '#22c55e' : score >= 50 ? '#eab308' : '#dc2626'}
-                  strokeWidth="8"
-                  strokeDasharray={circumference}
-                  strokeDashoffset={dashoffset}
-                  strokeLinecap="round"
-                  className="transition-all duration-1000"
+              <div
+                className="h-1.5 bg-surface rounded-full overflow-hidden mb-3"
+                role="progressbar"
+                aria-valuenow={activeStep + 1}
+                aria-valuemin={1}
+                aria-valuemax={ANALYZE_STEPS.length}
+                aria-label="Analysis progress"
+              >
+                <div
+                  className="h-full bg-accent rounded-full transition-all duration-700 ease-out"
+                  style={{ width: `${((activeStep + 1) / ANALYZE_STEPS.length) * 100}%` }}
                 />
-              </svg>
-              <div className="absolute flex flex-col items-center justify-center" style={{ marginTop: '10px' }}>
-                <span className={`text-2xl font-bold ${getScoreColor(score)}`}>{score}%</span>
-                <span className="text-[10px] text-gray-500">{t('Compliance')}</span>
               </div>
-              <p className="text-xs text-gray-500 mt-2">
-                {result.passed_count}/{result.total_rules} {t('rules passed')}
-              </p>
-            </div>
-          </div>
-
-          {/* Compliance Radar */}
-          {result.compliance_radar && (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <h3 className="font-semibold text-gray-800 mb-4">{t('Compliance Radar')}</h3>
-              <RadarChart radar={result.compliance_radar} />
-              <p className="mt-3 text-xs text-gray-400 leading-relaxed">
-                {t('Axes weighed by legal impact (declarations 30%, pricing 20%, dates 10%, consumer care 10%, font size 20%, readability 10%). The font-size axis is excluded when no calibration reference (credit card / barcode) is present.')}
-              </p>
-            </div>
-          )}
-
-          {/* Compliance heat-map overlay */}
-          {result.heatmaps && result.heatmaps.length > 0 && (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <h3 className="font-semibold text-gray-800 mb-1">{t('Compliance Heat-Map')}</h3>
-              <p className="text-xs text-gray-500 mb-4">
-                {t('Verdicts drawn back onto the photo — green = compliant, red = violation, yellow = low confidence, cyan = calibration reference.')}
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {result.heatmaps.map((h, i) => (
-                  <figure key={i} className="border border-gray-200 rounded-lg overflow-hidden bg-gray-50">
-                    {heatmapUrls[i] ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={heatmapUrls[i]}
-                        alt={`Compliance heat-map photo ${h.image_index + 1}`}
-                        className="w-full object-contain bg-white"
-                      />
-                    ) : (
-                      <div className="w-full h-48 flex items-center justify-center text-gray-400 text-sm">
-                        {t('Heat-map unavailable')}
-                      </div>
-                    )}
-                    <figcaption className="px-3 py-2 text-xs text-gray-500 bg-white border-t border-gray-100">
-                      {t('Photo {n} heat-map', { n: h.image_index + 1 })}
-                    </figcaption>
-                  </figure>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Extracted Declarations (editable — corrections re-score instantly) */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <h3 className="font-semibold text-gray-800 mb-1">{t('Extracted Declarations')}</h3>
-            {result.extraction_confidence != null && (
-              <div className="mb-3 flex items-center gap-2 text-xs">
-                <span className="font-medium text-gray-500">{t('Extraction confidence')}</span>
-                <span
-                  className={`font-bold ${
-                    result.extraction_confidence.overall >= 70
-                      ? 'text-green-600'
-                      : result.extraction_confidence.overall >= 40
-                        ? 'text-yellow-600'
-                        : 'text-red-600'
-                  }`}
-                >
-                  {result.extraction_confidence.overall}%
-                </span>
-                <span className="text-gray-400">
-                  ({result.extraction_confidence.fields_present}/
-                  {result.extraction_confidence.fields_required} {t('required fields')})
-                </span>
-              </div>
-            )}
-            {canEdit ? (
-              <p className="text-xs text-gray-500 mb-3">
-                {t('Click the pencil icon to correct a misread value. Saving re-runs the compliance check and score immediately, and the correction is stored with the inspection (original AI value kept for audit).')}
-              </p>
-            ) : (
-              <p className="text-xs text-gray-500 mb-3">
-                {t('Sign in as ADMIN / INSPECTOR to correct misread values.')}
-              </p>
-            )}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {Object.entries(result.declarations ?? {}).map(([key, value]) => {
-                const overridden = result.manual_overrides?.[key]
-                const isEditing = !!(editing[key] && canEdit)
-                const isSaving = !!savingFields[key]
-                return (
-                  <div
-                    key={key}
-                    className={`flex items-start gap-2 p-2 bg-gray-50 rounded-lg ${
-                      overridden ? 'ring-1 ring-amber-300' : ''
-                    }`}
-                  >
-                    <div className="min-w-[120px] shrink-0">
-                      <span className="text-sm font-medium text-gray-600 capitalize block">
-                        {FIELD_LABELS[key] ?? key.replace(/_/g, ' ')}:
-                      </span>
-                      {overridden && (
-                        <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 rounded px-1 py-0.5 inline-block mt-0.5">
-                          {t('CORRECTED')}
-                        </span>
-                      )}
-                    </div>
-                    {isEditing ? (
-                      <div className="flex-1">
-                        <input
-                          value={drafts[key] ?? ''}
-                          onChange={(e) => setDrafts((prev) => ({ ...prev, [key]: e.target.value }))}
-                          disabled={isSaving}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') saveField(key)
-                            if (e.key === 'Escape') cancelEdit(key)
-                          }}
-                          placeholder={value || t('Not detected — type a value')}
-                          className="w-full text-sm px-2 py-1 border border-gray-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
-                        />
-                        <div className="flex gap-2 mt-1">
-                          <button
-                            onClick={() => saveField(key)}
-                            disabled={isSaving}
-                            className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-                          >
-                            <Save className="w-3 h-3" /> {isSaving ? t('Saving…') : t('Save')}
-                          </button>
-                          <button
-                            onClick={() => cancelEdit(key)}
-                            disabled={isSaving}
-                            className="text-xs font-semibold px-2 py-1 rounded bg-white border border-gray-300 text-gray-600 hover:bg-gray-100"
-                          >
-                            {t('Cancel')}
-                          </button>
+              <ul className="space-y-2.5">
+                {ANALYZE_STEPS.map((step, i) => {
+                  const { label, desc, Icon } = step
+                  if (i < activeStep) {
+                    return (
+                      <li key={label} className="flex items-start gap-2.5">
+                        <CheckCircle2 className="w-4 h-4 text-success shrink-0 mt-0.5" />
+                        <div className="min-w-0">
+                          <p className="text-sm text-text-primary">{label}</p>
+                          <p className="text-[11px] text-text-muted">{desc}</p>
                         </div>
-                      </div>
-                    ) : (
-                      <div className="flex-1 min-w-0">
-                        <span className={`text-sm block break-words ${value ? 'text-gray-900' : 'text-red-400 italic'}`}>
-                          {value || t('Not detected')}
-                        </span>
-                        {overridden && (
-                          <p className="text-[11px] text-gray-400 mt-0.5">
-                            {t('Original (AI):')} &quot;{overridden.original || ''}&quot;
-                          </p>
-                        )}
-                      </div>
-                    )}
-                    {canEdit && !isEditing && (
-                      <button
-                        onClick={() => startEdit(key)}
-                        title={t('Correct {field}', { field: FIELD_LABELS[key] ?? key })}
-                        className="shrink-0 p-1.5 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
-                      >
-                        <Pencil className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-            <p className="mt-3 text-xs text-gray-500">
-              {t('Corrections save automatically to inspection')}{' '}
-              <span className="font-mono">{result.inspection_id}</span> —{' '}
-              <Link href={`/inspection/${result.inspection_id}`} className="text-blue-600 hover:underline font-medium">
-                {t('open the full report')}
-              </Link>{' '}
-              {t('for evidence photos, heat-maps and exports.')}
-            </p>
-          </div>
-
-          {/* Raw-OCR transcript (display-only transparency side channel) */}
-          {result.ocr_transcript != null && result.ocr_transcript.length > 0 && (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <details className="group">
-                <summary className="flex items-center justify-between cursor-pointer list-none">
-                  <h3 className="font-semibold text-gray-800 flex items-center gap-2">
-                    <FileText className="w-5 h-5 text-gray-400" />
-                    {t('Raw label text (OCR transcript)')}
-                  </h3>
-                  <span className="text-xs text-gray-500">
-                    {t('{n} text regions', {
-                      n: result.ocr_transcript.reduce((s, e) => s + e.count, 0),
-                    })}
-                  </span>
-                </summary>
-                <div className="mt-3 space-y-3">
-                  {result.ocr_transcript.map((entry) => (
-                    <div key={entry.filename} className="bg-gray-50 rounded-lg p-3">
-                      <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
-                        <span className="font-mono text-xs font-semibold text-gray-600">
-                          {entry.filename}
-                        </span>
-                        <span className="text-[11px] text-gray-400">
-                          {t('{count} regions', { count: entry.count })}
-                          {entry.low_conf > 0 && (
-                            <span className="text-amber-600">
-                              {' '}· +{entry.low_conf} {t('low-confidence')}
-                            </span>
-                          )}
-                        </span>
-                      </div>
-                      <pre className="text-xs text-gray-700 whitespace-pre-wrap break-words font-mono leading-relaxed max-h-56 overflow-y-auto">
-                        {entry.text || t('No text detected')}
-                      </pre>
-                    </div>
-                  ))}
-                </div>
-                <p className="mt-3 text-[11px] text-gray-400">
-                  {t('Shown for transparency — this raw text is never used to fill declarations.')}
-                </p>
-              </details>
-            </div>
-          )}
-
-          {/* Rule Violations */}
-          {result.violations && result.violations.length > 0 && (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <h3 className="font-semibold text-gray-800 mb-4 flex items-center gap-2">
-                <AlertTriangle className="w-5 h-5 text-orange-500" />
-                {t('Rule Violations ({n})', { n: result.violations.length })}
-              </h3>
-              <div className="space-y-3">
-                {result.violations.map((v, idx) => (
-                  <div key={idx} className={`border rounded-lg p-4 ${getSeverityStyle(v.severity)}`}>
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-xs font-bold px-2 py-0.5 rounded bg-white/60 border">
-                            {v.severity}
-                          </span>
-                          <span className="text-xs font-mono font-semibold">{v.rule_no}</span>
-                          <span className="text-xs opacity-70">({tStatus(v.status)})</span>
+                      </li>
+                    )
+                  }
+                  if (i === activeStep) {
+                    return (
+                      <li key={label} className="flex items-start gap-2.5 animate-[step-pulse_1.6s_ease-in-out_infinite]">
+                        <Icon className="w-4 h-4 text-accent shrink-0 mt-0.5" />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-text-primary">{label}</p>
+                          <p className="text-[11px] text-text-muted">{desc}</p>
                         </div>
-                        <p className="text-sm font-medium">{v.description}</p>
-                        {v.extracted_value && (
-                          <p className="text-xs mt-1 opacity-70">{t('Extracted:')} &quot;{v.extracted_value}&quot;</p>
-                        )}
-                        {v.remediation && (
-                          <p className="text-xs mt-1 italic">
-                            <span className="font-semibold">{t('Fix:')}</span> {v.remediation}
-                          </p>
-                        )}
+                      </li>
+                    )
+                  }
+                  return (
+                    <li key={label} className="flex items-start gap-2.5 opacity-50">
+                      <Icon className="w-4 h-4 text-text-muted shrink-0 mt-0.5" />
+                      <div className="min-w-0">
+                        <p className="text-sm text-text-secondary">{label}</p>
+                        <p className="text-[11px] text-text-muted">{desc}</p>
                       </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                    </li>
+                  )
+                })}
+              </ul>
             </div>
           )}
 
-          {/* No violations */}
-          {result.violations && result.violations.length === 0 && (
-            <div className="bg-green-50 rounded-xl border border-green-200 p-6 text-center">
-              <CheckCircle className="w-10 h-10 text-green-600 mx-auto mb-2" />
-              <p className="font-semibold text-green-800">{t('All Rules Passed')}</p>
-              <p className="text-sm text-green-600">{t('No compliance violations detected.')}</p>
-            </div>
+          {/* Same-product confirmation */}
+          {totalImages > 0 && !loading && (
+            <label className="mt-4 flex items-start gap-3 p-4 rounded-xl bg-surface border border-surface-border cursor-pointer select-none hover:bg-surface-hover transition-colors">
+              <input
+                type="checkbox"
+                checked={sameProduct}
+                onChange={(e) => setSameProduct(e.target.checked)}
+                className="mt-0.5 w-4 h-4 accent-accent"
+              />
+              <span className="text-sm text-text-primary">
+                I confirm all {totalImages} photo{totalImages !== 1 ? 's' : ''} show the{' '}
+                <span className="font-semibold">same product</span> being inspected.
+                <span className="block text-xs text-text-muted mt-0.5">
+                  Required before analyzing — mixing different products gives a misleading compliance score.
+                </span>
+              </span>
+            </label>
           )}
 
-          {/* Consistency checks (possible misleading declarations) */}
-          {result.misleading_checks && result.misleading_checks.length > 0 && (
-            <div className="bg-white rounded-xl shadow-sm border border-amber-200 p-6">
-              <h3 className="font-semibold text-gray-800 mb-4 flex items-center gap-2">
-                <AlertTriangle className="w-5 h-5 text-amber-600" />
-                {t('Consistency Checks ({n})', { n: result.misleading_checks.length })}
-              </h3>
-              <div className="space-y-3">
-                {result.misleading_checks.map((c, idx) => (
-                  <div key={idx} className="border rounded-lg p-4 bg-amber-50 border-amber-200">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-bold px-2 py-0.5 rounded bg-white/60 border">
-                        {c.severity}
-                      </span>
-                      <span className="text-xs font-mono font-semibold">{c.check}</span>
-                    </div>
-                    <p className="text-sm font-medium">{c.detail}</p>
-                    {c.extracted_value && (
-                      <p className="text-xs mt-1 opacity-70">{t('Extracted:')} &quot;{c.extracted_value}&quot;</p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Font Measurement */}
-          {result.font_measurement && result.font_measurement.status !== 'CANNOT_MEASURE' && (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <h3 className="font-semibold text-gray-800 mb-4">{t('Font Measurement')}</h3>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                <div>
-                  <p className="text-xs text-gray-500">{t('Measured')}</p>
-                  <p className="text-lg font-semibold">{result.font_measurement.measured_mm ?? '—'} mm</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500">{t('Required')}</p>
-                  <p className="text-lg font-semibold">{result.font_measurement.required_mm ?? '—'} mm</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500">{t('Uncertainty')}</p>
-                  <p className="text-lg font-semibold">±{result.font_measurement.uncertainty ?? '—'} mm</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500">{t('Status')}</p>
-                  <p className={`text-lg font-semibold ${
-                    result.font_measurement.status === 'COMPLIANT' ? 'text-green-600' :
-                    result.font_measurement.status === 'REVIEW_REQUIRED' ? 'text-yellow-600' :
-                    'text-red-600'
-                  }`}>
-                    {tStatus(result.font_measurement.status)}
-                  </p>
-                </div>
-              </div>
-              {result.font_measurement.implausible && (
-                <p className="mt-2 text-xs text-yellow-700 bg-yellow-50 border border-yellow-200 rounded px-2 py-1">
-                  {t('Reading flagged implausible relative to the legal minimum — manual review.')}
-                </p>
-              )}
-              <p className="mt-2 text-[11px] text-gray-400">
-                {t('Calibration:')} {result.font_measurement.calibration ?? '—'}
-                {result.font_measurement.ppm != null && t(' at {n} px/mm', { n: result.font_measurement.ppm })}
-                {' · '}{t('Method:')} {result.font_measurement.method ?? '—'}
-                {result.font_measurement.image_index != null &&
-                  t(' · Measured from photo #{n}', { n: result.font_measurement.image_index + 1 })}
-</p>
-            </div>
-          )}
-
-          {result.font_measurement && result.font_measurement.status === 'CANNOT_MEASURE' && (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <h3 className="font-semibold text-gray-800 mb-2">{t('Font Measurement')}</h3>
-              <p className="text-sm text-gray-700">
-                {t('Cannot measure — manual review required.')}
-              </p>
-              {result.font_measurement.calibration_rejected_reason && (
-                <p className="mt-1 text-xs text-gray-500">
-                  {t('Reason:')} {result.font_measurement.calibration_rejected_reason}
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* Evidence Hash */}
-          {result.evidence?.hash && (
-            <div className="bg-gray-50 rounded-xl border border-gray-200 p-4">
-              <h3 className="font-semibold text-gray-700 text-sm mb-2">{t('Evidence Hash')}</h3>
-              <div className="flex flex-col sm:flex-row gap-2 text-xs text-gray-500 break-all">
-                <span className="font-medium">{t('SHA-256:')}</span>
-                <span>{result.evidence.hash}</span>
-              </div>
-            </div>
-          )}
-
-          {/* Action Buttons */}
-          <div className="flex gap-3">
+          {/* Analyze button */}
+          <div className="mt-4 flex flex-col gap-3">
             <button
-              onClick={handleDownloadPdf}
-              disabled={downloadingPdf}
-              className="flex-1 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2 font-semibold"
+              onClick={handleUpload}
+              disabled={totalImages === 0 || loading || !sameProduct}
+              className="btn-primary w-full flex items-center justify-center gap-2"
             >
-              {downloadingPdf ? (
+              {loading ? (
                 <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
-                  {t('Generating PDF...')}
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Analyzing… {elapsed}s
                 </>
               ) : (
                 <>
-                  <Download className="w-4 h-4" />
-                  {t('Download PDF Report')}
+                  <Scan className="w-4 h-4" />
+                  Analyze
                 </>
               )}
             </button>
-            <button
-              onClick={handleDownloadCertificate}
-              disabled={downloadingCert}
-              className="flex-1 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2 font-semibold"
-            >
-              {downloadingCert ? (
-                <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
-                  {t('Generating Certificate...')}
-                </>
-              ) : (
-                <>
-                  <Shield className="w-4 h-4" />
-                  {t('Certificate')}
-                </>
-              )}
-            </button>
-            <button
-              onClick={() => {
-                setResult(null)
-                setSelectedImages([])
-                setImagePreviews([])
-                setDrafts({})
-                setEditing({})
-                setSavingFields({})
-                setSameProduct(false)
-                setHeatmapUrls([])
-              }}
-              className="flex-1 py-3 text-sm text-gray-600 hover:text-gray-800 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
-            >
-              {t('New Inspection')}
-            </button>
+            {totalImages > 0 && !sameProduct && !loading && (
+              <p className="text-xs text-warning text-center">
+                Confirm same product, then analyze.
+              </p>
+            )}
           </div>
-        </section>
-      )}
+        </Card>
       </div>
 
-      {/* Full-size image viewer (verify same product before analysing) */}
+      {/* Full-size image viewer */}
       {viewingPreview !== null && (
         <div
           className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4"
           onClick={() => setViewingPreview(null)}
+          role="dialog"
+          aria-label="Image preview"
         >
           <div className="relative max-h-full max-w-5xl" onClick={(e) => e.stopPropagation()}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={imagePreviews[viewingPreview]}
               alt={`Product image ${viewingPreview + 1} full view`}
-              className="max-h-[85vh] max-w-full rounded-lg shadow-2xl bg-white object-contain"
+              className="max-h-[85vh] max-w-full rounded-lg shadow-2xl object-contain"
             />
             <div className="mt-3 flex items-center justify-between gap-3">
               <p className="text-white/90 text-sm">
-                {t('Photo {n}', { n: viewingPreview + 1 })}
+                Photo {viewingPreview + 1}
                 {selectedImages[viewingPreview] && (
                   <span className="opacity-70"> — {selectedImages[viewingPreview].name}</span>
                 )}
               </p>
               <button
                 onClick={() => setViewingPreview(null)}
-                className="px-4 py-2 bg-white text-gray-900 rounded-lg font-semibold text-sm hover:bg-gray-200"
+                className="btn-overlay btn-sm"
               >
-                {t('Close')}
+                Close
               </button>
             </div>
           </div>
         </div>
       )}
-    </div>
+    </AppShell>
   )
 }

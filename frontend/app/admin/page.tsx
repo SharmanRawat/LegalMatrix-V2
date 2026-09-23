@@ -1,11 +1,12 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Search, KeyRound, FileSearch, ChevronLeft, Lock } from 'lucide-react'
+import { Search, KeyRound, FileSearch, ChevronLeft, Lock, Shield, Users } from 'lucide-react'
 import toast, { Toaster } from 'react-hot-toast'
-import Navbar from '@/app/components/Navbar'
+import AppShell from '@/app/components/AppShell'
+import Card from '@/app/components/ui/Card'
 import { api, apiError, getUser } from '@/app/lib/api'
 import { useI18n } from '@/app/lib/i18n'
 
@@ -28,15 +29,15 @@ interface ScanRow {
 }
 
 const ROLE_BADGE: Record<string, string> = {
-  ADMIN: 'bg-purple-50 text-purple-700 border-purple-200',
-  INSPECTOR: 'bg-blue-50 text-blue-700 border-blue-200',
-  VIEWER: 'bg-gray-50 text-gray-600 border-gray-200',
+  ADMIN: 'badge badge-info',
+  INSPECTOR: 'badge badge-success',
+  VIEWER: 'badge badge-warning',
 }
 
 const statusColor: Record<string, string> = {
-  COMPLIANT: 'text-green-600',
-  REVIEW_REQUIRED: 'text-yellow-600',
-  POTENTIAL_VIOLATION: 'text-red-600',
+  COMPLIANT: 'text-success',
+  REVIEW_REQUIRED: 'text-warning',
+  POTENTIAL_VIOLATION: 'text-danger',
 }
 
 export default function AdminUsersPage() {
@@ -124,47 +125,52 @@ export default function AdminUsersPage() {
   const isAdmin = !!me && me.role === 'ADMIN'
 
   return (
-    <>
-      <Navbar />
+    <AppShell>
       <Toaster position="top-right" />
-      <main className="max-w-5xl mx-auto p-4 sm:p-6 space-y-6">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-6">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">{t('User Management')}</h1>
-            <p className="text-sm text-gray-500">{t('Admin-only: search users, view their scans, reset passwords')}</p>
+            <h1 className="text-xl sm:text-2xl font-bold text-text-primary">
+              {t('User Management')}
+            </h1>
+            <p className="text-sm text-text-secondary mt-1">
+              {t('Admin-only: search users, view their scans, reset passwords')}
+            </p>
           </div>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-50 border border-purple-200 text-xs font-semibold text-purple-700">
-            <ShieldMini />
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-info-subtle border border-info/20 text-xs font-semibold text-info">
+            <Shield className="w-3.5 h-3.5" />
             {t('Admin only')}
           </span>
         </header>
 
         {!isAdmin ? (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-10 text-center">
-            <p className="text-gray-500">{t('This page is restricted to administrators.')}</p>
-            <Link href="/dashboard" className="inline-flex items-center gap-1 mt-3 text-sm text-blue-600 hover:underline">
-              <ChevronLeft className="w-4 h-4" /> {t('Back to dashboard')}
-            </Link>
-          </div>
+          <Card>
+            <div className="text-center py-10">
+              <p className="text-text-secondary">{t('This page is restricted to administrators.')}</p>
+              <Link href="/dashboard" className="inline-flex items-center gap-1 mt-3 text-sm text-accent hover:text-accent-hover">
+                <ChevronLeft className="w-4 h-4" /> {t('Back to dashboard')}
+              </Link>
+            </div>
+          </Card>
         ) : (
           <>
             {/* Search bar */}
-            <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 space-y-3">
+            <Card className="space-y-3">
               <div className="flex gap-2">
                 <div className="relative flex-1">
-                  <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <Search className="w-4 h-4 text-text-muted absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     value={q}
                     onChange={(e) => setQ(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && runSearch()}
                     placeholder={t('Search by username or name…')}
-                    className="w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    className="glass-input w-full pl-9"
                   />
                 </div>
                 <select
                   value={role}
                   onChange={(e) => setRole(e.target.value)}
-                  className="px-3 py-2.5 border border-gray-300 rounded-lg text-sm bg-white"
+                  className="glass-input px-3"
                 >
                   <option value="">{t('All roles')}</option>
                   <option value="ADMIN">ADMIN</option>
@@ -174,29 +180,32 @@ export default function AdminUsersPage() {
                 <button
                   onClick={runSearch}
                   disabled={loading}
-                  className="px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-semibold"
+                  className="btn-primary"
                 >
                   {loading ? t('Searching') + '…' : t('Search')}
                 </button>
               </div>
-              <p className="text-xs text-gray-400">
+              <p className="text-xs text-text-muted">
                 {t('Passwords are stored as one-way hashes and can never be viewed — an admin can only reset one.')}
               </p>
-            </section>
+            </Card>
 
             {/* Users table */}
             {loading ? (
               <div className="flex justify-center py-20">
-                <div className="animate-spin rounded-full h-10 w-10 border-4 border-blue-500 border-t-transparent" />
+                <div className="animate-spin rounded-full h-10 w-10 border-4 border-accent border-t-transparent" />
               </div>
             ) : users.length === 0 ? (
-              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-10 text-center">
-                <p className="text-gray-500">{t('No users found matching your filters.')}</p>
-              </div>
+              <Card>
+                <div className="text-center py-10">
+                  <Users className="w-10 h-10 mx-auto text-text-muted mb-2" />
+                  <p className="text-text-secondary">{t('No users found matching your filters.')}</p>
+                </div>
+              </Card>
             ) : (
-              <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+              <div className="glass-card overflow-hidden">
                 <table className="w-full text-sm">
-                  <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
+                  <thead className="bg-bg-secondary text-left text-xs uppercase tracking-wide text-text-muted">
                     <tr>
                       <th className="px-4 py-3">{t('Username')}</th>
                       <th className="px-4 py-3">{t('Name')}</th>
@@ -206,11 +215,11 @@ export default function AdminUsersPage() {
                   </thead>
                   <tbody>
                     {users.map((u) => (
-                      <tr key={String(u.id)} className="border-t border-gray-100 hover:bg-gray-50">
-                        <td className="px-4 py-3 font-mono text-xs text-gray-700">{u.username}</td>
-                        <td className="px-4 py-3 text-gray-800">{u.name || '—'}</td>
+                      <tr key={String(u.id)} className="border-t border-surface-border hover:bg-surface-hover">
+                        <td className="px-4 py-3 font-mono text-xs text-text-secondary">{u.username}</td>
+                        <td className="px-4 py-3 text-text-primary">{u.name || '—'}</td>
                         <td className="px-4 py-3">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${ROLE_BADGE[u.role] || 'bg-gray-50'}`}>
+                          <span className={ROLE_BADGE[u.role] || 'badge'}>
                             {u.role}
                           </span>
                         </td>
@@ -219,7 +228,7 @@ export default function AdminUsersPage() {
                             <button
                               onClick={() => openDetail(u.username, u.name || u.username)}
                               disabled={detailLoading}
-                              className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100"
+                              className="btn-ghost btn-sm"
                             >
                               <FileSearch className="w-3.5 h-3.5" /> {t('Scans')}
                             </button>
@@ -228,7 +237,7 @@ export default function AdminUsersPage() {
                                 setResetFor(u.username)
                                 setNewPass('')
                               }}
-                              className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100"
+                              className="btn-ghost btn-sm"
                             >
                               <KeyRound className="w-3.5 h-3.5" /> {t('Reset password')}
                             </button>
@@ -243,10 +252,10 @@ export default function AdminUsersPage() {
 
             {/* Reset password inline form */}
             {resetFor && (
-              <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 space-y-3">
+              <Card className="space-y-3">
                 <div className="flex items-center gap-2">
-                  <Lock className="w-4 h-4 text-gray-400" />
-                  <h3 className="text-sm font-semibold text-gray-800">
+                  <Lock className="w-4 h-4 text-text-muted" />
+                  <h3 className="text-sm font-semibold text-text-primary">
                     {t('Reset password for {username}', { username: resetFor })}
                   </h3>
                 </div>
@@ -256,71 +265,71 @@ export default function AdminUsersPage() {
                     value={newPass}
                     onChange={(e) => setNewPass(e.target.value)}
                     placeholder={t('New password')}
-                    className="flex-1 px-3 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    className="glass-input flex-1"
                   />
                   <button
                     onClick={() => submitReset(resetFor)}
                     disabled={resetting}
-                    className="px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-semibold"
+                    className="btn-primary"
                   >
                     {resetting ? t('Saving…') : t('Set password')}
                   </button>
                   <button
                     onClick={() => setResetFor(null)}
-                    className="px-4 py-2.5 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-100 text-sm"
+                    className="btn-ghost"
                   >
                     {t('Cancel')}
                   </button>
                 </div>
-                <p className="text-xs text-gray-400">
+                <p className="text-xs text-text-muted">
                   {t('The old password is unrecoverable (stored as a hash). The user must use the new one from now on.')}
                 </p>
-              </section>
+              </Card>
             )}
 
             {/* Per-user scans drawer */}
             {detail && (
-              <section className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6">
-                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <Card className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <h3 className="text-base font-bold text-gray-900">
+                    <h3 className="text-base font-bold text-text-primary">
                       {t('Scans by {name}', { name: detail.name })}
                     </h3>
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-text-muted">
                       {detail.total} {t(detail.total === 1 ? 'result' : 'results')} · {detail.username}
                     </p>
                   </div>
                   <button
                     onClick={() => setDetail(null)}
-                    className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100"
+                    className="btn-ghost btn-sm"
                   >
                     {t('Close')}
                   </button>
                 </div>
                 {detail.scans.length === 0 ? (
-                  <p className="text-sm text-gray-400">{t('No scans yet for this user.')}</p>
+                  <p className="text-sm text-text-muted">{t('No scans yet for this user.')}</p>
                 ) : (
                   <ul className="space-y-2">
                     {detail.scans.map((s) => (
                       <li key={s.id}>
                         <Link
                           href={`/inspection/${s.id}`}
-                          className="flex items-center justify-between p-3 rounded-lg border border-gray-100 hover:bg-gray-50 transition-colors"
+                          className="flex items-center justify-between p-3 rounded-lg bg-surface hover:bg-surface-hover hover:shadow-glass-lg hover:-translate-y-0.5 transition-all"
                         >
                           <div className="min-w-0">
-                            <p className="text-sm font-medium text-gray-800 truncate">
+                            <p className="text-sm font-medium text-text-primary truncate">
                               {s.product_name || t('Unknown product')}
                             </p>
-                            <p className="text-xs text-gray-500 truncate">
+                            <p className="text-xs text-text-muted truncate">
                               {s.id} • {new Date(s.created_at).toLocaleString()}
                               {s.manufacturer ? ` • ${s.manufacturer}` : ''}
                             </p>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
-                            <span className={`text-xs font-semibold ${statusColor[s.status] || 'text-gray-600'}`}>
+                            <span className={`text-xs font-semibold ${statusColor[s.status] || 'text-text-secondary'}`}>
                               {s.compliance_score}%
                             </span>
-                            <span className="px-2 py-0.5 rounded text-[10px] font-semibold border bg-gray-50 text-gray-600">
+                            <span className="badge">
                               {s.status.replace(/_/g, ' ')}
                             </span>
                           </div>
@@ -329,19 +338,11 @@ export default function AdminUsersPage() {
                     ))}
                   </ul>
                 )}
-              </section>
+              </Card>
             )}
           </>
         )}
-      </main>
-    </>
-  )
-}
-
-function ShieldMini() {
-  return (
-    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z" />
-    </svg>
+      </div>
+    </AppShell>
   )
 }

@@ -90,3 +90,7 @@ backend/image36_2.jpg
 *.pem
 *.key
 secrets.json
+
+# agent/browser test artifacts
+.playwright-mcp/
+.opencode/

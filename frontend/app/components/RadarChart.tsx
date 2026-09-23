@@ -41,7 +41,7 @@ export default function RadarChart({ radar, size = 280 }: { radar: RadarResult; 
             key={v}
             points={ringPoints(v)}
             fill="none"
-            stroke="#e5e7eb"
+            stroke="#cbd5e1"
             strokeWidth={v === 100 ? 1.2 : 0.8}
           />
         ))}
@@ -51,13 +51,13 @@ export default function RadarChart({ radar, size = 280 }: { radar: RadarResult; 
           const label = a.axis.length > 12 ? a.axis.replace(/ /g, '\n') : a.axis
           return (
             <g key={a.axis}>
-              <line x1={cx} y1={cy} x2={pt(i, 100)[0]} y2={pt(i, 100)[1]} stroke="#f3f4f6" strokeWidth={1} />
+              <line x1={cx} y1={cy} x2={pt(i, 100)[0]} y2={pt(i, 100)[1]} stroke="#94a3b8" strokeWidth={1} />
               <text
                 x={x}
                 y={y}
                 textAnchor="middle"
                 dominantBaseline="middle"
-                className="fill-gray-500 text-[10px] font-medium"
+                className="fill-text-secondary text-[10px] font-medium"
               >
                 {label.split('\n').map((line, li) => (
                   <tspan key={li} x={x} dy={li === 0 ? -4 : 11}>
@@ -66,11 +66,11 @@ export default function RadarChart({ radar, size = 280 }: { radar: RadarResult; 
                 ))}
               </text>
               {a.score !== null ? (
-                <text x={pt(i, a.score)[0]} y={pt(i, a.score)[1] - 8} textAnchor="middle" className="fill-gray-700 text-[10px] font-semibold">
+                <text x={pt(i, a.score)[0]} y={pt(i, a.score)[1] - 8} textAnchor="middle" className="fill-text-primary text-[10px] font-semibold">
                   {Math.round(a.score)}
                 </text>
               ) : (
-                <text x={pt(i, 8)[0]} y={pt(i, 8)[1]} textAnchor="middle" className="fill-gray-400 text-[9px]">
+                <text x={pt(i, 8)[0]} y={pt(i, 8)[1]} textAnchor="middle" className="fill-text-muted text-[9px]">
                   n/a
                 </text>
               )}
@@ -86,6 +86,7 @@ export default function RadarChart({ radar, size = 280 }: { radar: RadarResult; 
             stroke={color}
             strokeWidth={2}
             strokeLinejoin="round"
+            className="radar-draw"
           />
         )}
       </svg>
@@ -97,8 +98,8 @@ export default function RadarChart({ radar, size = 280 }: { radar: RadarResult; 
         >
           Grade {radar.grade}
         </span>
-        <span className="text-sm text-gray-600">Overall {Math.round(overall)}%</span>
-        <span className="text-xs text-gray-400">{radar.grade_label}</span>
+        <span className="text-sm text-text-secondary">Overall {Math.round(overall)}%</span>
+        <span className="text-xs text-text-muted">{radar.grade_label}</span>
       </div>
     </div>
   )

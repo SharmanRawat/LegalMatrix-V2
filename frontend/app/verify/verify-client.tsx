@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { ShieldCheck, ShieldX, ShieldAlert, Loader2, ArrowRight, CheckCircle2, XCircle } from 'lucide-react'
-import Navbar from '@/app/components/Navbar'
+import AppShell from '@/app/components/AppShell'
+import Card from '@/app/components/ui/Card'
 import { api } from '@/app/lib/api'
 import { useI18n } from '@/app/lib/i18n'
 
@@ -65,20 +66,19 @@ export default function VerifyClient() {
   }, [searchParams, t])
 
   return (
-    <>
-      <Navbar />
-      <main className="max-w-2xl mx-auto p-4 sm:p-6 space-y-6">
-        <section className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 sm:p-8">
+    <AppShell>
+      <div className="max-w-2xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+        <Card className="p-6 sm:p-8">
           {state?.phase === 'missing' && (
             <div className="text-center space-y-4">
-              <ShieldAlert className="w-12 h-12 mx-auto text-amber-500" />
-              <h1 className="text-xl font-bold text-gray-900">{t('Certificate verification')}</h1>
-              <p className="text-sm text-gray-500">
+              <ShieldAlert className="w-12 h-12 mx-auto text-warning" />
+              <h1 className="text-xl font-bold text-text-primary">{t('Certificate verification')}</h1>
+              <p className="text-sm text-text-secondary">
                 {t('Open a certificate QR code link to verify a LegalMatrix compliance certificate.')}
               </p>
               <Link
                 href="/"
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors"
+                className="inline-flex items-center gap-2 btn-primary"
               >
                 {t('Try a new inspection')}
                 <ArrowRight className="w-4 h-4" />
@@ -88,19 +88,19 @@ export default function VerifyClient() {
 
           {state?.phase === 'loading' && (
             <div className="text-center space-y-4 py-8">
-              <Loader2 className="w-10 h-10 mx-auto text-blue-600 animate-spin" />
-              <p className="text-sm text-gray-500">{t('Verifying certificate…')}</p>
+              <Loader2 className="w-10 h-10 mx-auto text-accent animate-spin" />
+              <p className="text-sm text-text-secondary">{t('Verifying certificate…')}</p>
             </div>
           )}
 
           {state?.phase === 'error' && (
             <div className="text-center space-y-4">
-              <ShieldX className="w-12 h-12 mx-auto text-red-500" />
-              <h1 className="text-xl font-bold text-gray-900">{t('Unable to verify')}</h1>
-              <p className="text-sm text-gray-500">{state.message}</p>
+              <ShieldX className="w-12 h-12 mx-auto text-danger" />
+              <h1 className="text-xl font-bold text-text-primary">{t('Unable to verify')}</h1>
+              <p className="text-sm text-text-secondary">{state.message}</p>
               <Link
                 href="/"
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors"
+                className="inline-flex items-center gap-2 btn-primary"
               >
                 {t('Try a new inspection')}
                 <ArrowRight className="w-4 h-4" />
@@ -109,9 +109,9 @@ export default function VerifyClient() {
           )}
 
           {state?.phase === 'done' && <VerificationResult data={state.data} />}
-        </section>
-      </main>
-    </>
+        </Card>
+      </div>
+    </AppShell>
   )
 }
 
@@ -119,59 +119,59 @@ function VerificationResult({ data }: { data: VerifyResult }) {
   const { t } = useI18n()
   const verified = data.hash_match
   const Icon = verified ? CheckCircle2 : data.found ? ShieldAlert : XCircle
-  const iconColor = verified ? 'text-green-600' : 'text-amber-500'
-  const badgeColor = verified
-    ? 'bg-green-50 text-green-700 border-green-200'
-    : 'bg-amber-50 text-amber-700 border-amber-200'
+  const iconColor = verified ? 'text-success' : 'text-warning'
+  const badgeVariant = verified
+    ? 'badge badge-success'
+    : 'badge badge-warning'
   const summary = verified ? t('Authentic — certificate and evidence hash match.') : t('Certificate found, but the evidence hash does not match the stored record.')
 
   return (
     <div className="space-y-5">
       <div className="text-center space-y-3">
         <Icon className={`w-12 h-12 mx-auto ${iconColor}`} />
-        <h1 className="text-xl font-bold text-gray-900">
+        <h1 className="text-xl font-bold text-text-primary">
           {verified ? t('Certificate verified') : t('Verification warning')}
         </h1>
-        <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${badgeColor}`}>
+        <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${badgeVariant}`}>
           <ShieldCheck className="w-3.5 h-3.5" />
           {verified ? t('Authentic') : t('Hash mismatch')}
         </span>
-        <p className="text-sm text-gray-500">{summary}</p>
+        <p className="text-sm text-text-secondary">{summary}</p>
       </div>
 
       <dl className="grid sm:grid-cols-2 gap-3 text-sm">
-        <div className="rounded-lg bg-gray-50 border border-gray-200 p-3">
-          <dt className="text-xs text-gray-500">{t('Inspection ID')}</dt>
-          <dd className="font-mono font-semibold text-gray-900 break-all">{data.inspection_id}</dd>
+        <div className="rounded-lg bg-bg-secondary border border-surface-border p-3">
+          <dt className="text-xs text-text-muted">{t('Inspection ID')}</dt>
+          <dd className="font-mono font-semibold text-text-primary break-all">{data.inspection_id}</dd>
         </div>
-        <div className="rounded-lg bg-gray-50 border border-gray-200 p-3">
-          <dt className="text-xs text-gray-500">{t('Product')}</dt>
-          <dd className="font-semibold text-gray-900">{data.product_name || '—'}</dd>
+        <div className="rounded-lg bg-bg-secondary border border-surface-border p-3">
+          <dt className="text-xs text-text-muted">{t('Product')}</dt>
+          <dd className="font-semibold text-text-primary">{data.product_name || '—'}</dd>
         </div>
-        <div className="rounded-lg bg-gray-50 border border-gray-200 p-3">
-          <dt className="text-xs text-gray-500">{t('Manufacturer')}</dt>
-          <dd className="font-semibold text-gray-900">{data.manufacturer || '—'}</dd>
+        <div className="rounded-lg bg-bg-secondary border border-surface-border p-3">
+          <dt className="text-xs text-text-muted">{t('Manufacturer')}</dt>
+          <dd className="font-semibold text-text-primary">{data.manufacturer || '—'}</dd>
         </div>
-        <div className="rounded-lg bg-gray-50 border border-gray-200 p-3">
-          <dt className="text-xs text-gray-500">{t('Status / Score')}</dt>
-          <dd className="font-semibold text-gray-900">
+        <div className="rounded-lg bg-bg-secondary border border-surface-border p-3">
+          <dt className="text-xs text-text-muted">{t('Status / Score')}</dt>
+          <dd className="font-semibold text-text-primary">
             {data.status || '—'}
             {typeof data.compliance_score === 'number' ? ` · ${data.compliance_score}/100` : ''}
           </dd>
         </div>
-        <div className="rounded-lg bg-gray-50 border border-gray-200 p-3 sm:col-span-2">
-          <dt className="text-xs text-gray-500">{t('Issued')}</dt>
-          <dd className="font-semibold text-gray-900">{data.created_at ? new Date(data.created_at).toLocaleString() : '—'}</dd>
+        <div className="rounded-lg bg-bg-secondary border border-surface-border p-3 sm:col-span-2">
+          <dt className="text-xs text-text-muted">{t('Issued')}</dt>
+          <dd className="font-semibold text-text-primary">{data.created_at ? new Date(data.created_at).toLocaleString() : '—'}</dd>
         </div>
-        <div className="rounded-lg bg-gray-50 border border-gray-200 p-3 sm:col-span-2">
-          <dt className="text-xs text-gray-500">{t('Evidence SHA-256')}</dt>
-          <dd className="font-mono text-xs text-gray-700 break-all">{data.evidence_hash || '—'}</dd>
+        <div className="rounded-lg bg-bg-secondary border border-surface-border p-3 sm:col-span-2">
+          <dt className="text-xs text-text-muted">{t('Evidence SHA-256')}</dt>
+          <dd className="font-mono text-xs text-text-secondary break-all">{data.evidence_hash || '—'}</dd>
         </div>
       </dl>
 
       <Link
         href="/"
-        className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors"
+        className="flex items-center justify-center gap-2 btn-primary"
       >
         {t('Try a new inspection')}
         <ArrowRight className="w-4 h-4" />
