@@ -100,3 +100,40 @@ def test_classify_no_contacts_leaves_care_empty():
     cls = RegexFieldClassifier()
     res = cls.classify([_line("9040041200779"), _line("NET WT 40G")])
     assert res["fields"]["consumer_care"] == ""
+
+
+# ── count-unit net quantity (Rule 6(1)(c) 'by number') ─────────────────────
+# Product 1 of new_images prints 'Net Qty. 200 N' but RapidOCR returns the
+# mangled reading '200N' + 'Net Uty.' (value printed before the keyword).
+# The frozen golden corpus must stay byte-identical, so recovery is scoped to
+# the mangled 'UTY' keyword form: product 16 in the golden set has a CLEAN
+# 'NET QUANTITY:' keyword and must stay untouched.
+
+
+def test_net_quantity_count_unit_value_before_mangled_keyword():
+    cls = RegexFieldClassifier()
+    res = cls.classify([_line("200N"), _line("Net Uty.")])
+    assert res["fields"]["net_quantity"] == "200N"
+
+
+def test_net_quantity_count_unit_keyword_first():
+    cls = RegexFieldClassifier()
+    res = cls.classify([_line("NET QTY.: 200 N")])
+    assert res["fields"]["net_quantity"] == "200 N"
+
+
+def test_net_quantity_clean_quantity_keyword_stays_inert():
+    # Frozen-corpus product 16 shape: '50N' + clean 'NET QUANTITY:' must NOT be
+    # extracted — the count-unit recovery is deliberately scoped to mangled
+    # 'UTY' so the golden baseline stays byte-identical.
+    cls = RegexFieldClassifier()
+    res = cls.classify([_line("PAPER NAPKIN"), _line("50N"),
+                        _line("NET QUANTITY:"),
+                        _line("(50 N x 2 Ply each) (Usable Sheets)")])
+    assert res["fields"]["net_quantity"] == ""
+
+
+def test_net_quantity_bare_count_unit_needs_mangled_keyword():
+    cls = RegexFieldClassifier()
+    res = cls.classify([_line("50N"), _line("NET QUANTITY:")])
+    assert res["fields"]["net_quantity"] == ""

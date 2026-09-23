@@ -48,6 +48,14 @@ def test_legitimate_net_quantity_survives():
     assert merged["net_quantity"] == "200 ml (182 g)"
 
 
+def test_count_unit_net_quantity_survives():
+    # Rule 6(1)(c) count-unit declarations ('200 N' cotton swabs) must not be
+    # confused with the absurd magnitude misreads that the gate blanks.
+    results = [{"net_quantity": "200N"}]
+    merged = merge_extractions(results, ["back"])
+    assert merged.get("net_quantity", "") == "200N"
+
+
 def test_cjk_consumer_care_blanked():
     """'电话0-08-07-...' is recognizer noise on an Indian label, not a valid
     contact channel."""

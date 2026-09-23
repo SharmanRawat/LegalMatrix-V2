@@ -69,6 +69,20 @@ class TestComplianceEvaluation:
         nq = [v for v in result["violations"] if v["rule_id"] == "net_quantity"]
         assert nq and nq[0]["status"] == "FORMAT_ISSUE"
 
+    def test_net_quantity_count_unit_is_valid(self):
+        # Rule 6(1)(c) accepts net quantity by weight, measure OR number:
+        # count units like '200 N' / '2 nos' pass the format gate.
+        for nq in ("200 N", "200N", "2 nos", "5 pieces"):
+            result = rule_engine.evaluate_compliance(
+                {"mrp": "MRP Rs. 100/-", "product_name": "X", "manufacturer": "Y",
+                 "net_quantity": nq, "manufacturing_date": "01/2026",
+                 "consumer_care": "c@y.com", "dimensions": ""},
+                missing=[],
+            )
+            bad = [v for v in result["violations"]
+                   if v["rule_id"] == "net_quantity" and v["status"] == "FORMAT_ISSUE"]
+            assert bad == [], nq
+
 
 class TestMrpValidation:
     def test_accepts_rupee_symbol(self):

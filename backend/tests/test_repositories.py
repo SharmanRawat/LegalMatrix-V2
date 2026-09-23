@@ -136,7 +136,27 @@ class TestInspectionServiceHelpers:
             "manufacturing_date": "01/2026", "mrp": "MRP Rs.1", "consumer_care": "c@x",
             "dimensions": "", "edible": "no",
         }
+        # With corrected 'sold by dimensions' gating: 1 kg (weight) is not
+        # sold by dimensions → dims not required.
+        assert inspection_service.compute_missing(decl) == []
+
+    def test_dimensions_required_for_length_sold_non_edible(self):
+        decl = {
+            "manufacturer": "M", "product_name": "Cable", "net_quantity": "10 m",
+            "manufacturing_date": "01/2026", "mrp": "MRP Rs.1", "consumer_care": "c@x",
+            "dimensions": "", "edible": "no",
+        }
         assert inspection_service.compute_missing(decl) == ["dimensions_where_relevant"]
+
+    def test_dimensions_not_required_for_count_sold_non_edible(self):
+        # Product-1 case (cotton swabs '200 N'): non-edible but sold by count,
+        # so dimensions are NOT demanded (fixes the earlier false positive).
+        decl = {
+            "manufacturer": "M", "product_name": "Cotton Swabs", "net_quantity": "200 N",
+            "manufacturing_date": "01/2026", "mrp": "MRP Rs.1", "consumer_care": "c@x",
+            "dimensions": "", "edible": "no",
+        }
+        assert inspection_service.compute_missing(decl) == []
 
     def test_dimensions_not_required_for_edible(self):
         decl = {

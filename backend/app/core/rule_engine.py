@@ -44,7 +44,7 @@ class RuleEngine:
         },
         "dimensions_where_relevant": {
             "rule_no": "Rule 6(1)(g)",
-            "description": "Dimensions (length, width, height) must be declared for non-edible commodities sold by dimensions (e.g. garments, cables, electronics). Edible products sold by net weight/volume are exempt.",
+            "description": "Dimensions (length, width, height) must be declared for non-edible commodities sold by dimensions (e.g. garments, cables, electronics). Commodities sold by count (N/nos/pcs) or by weight/volume are exempt; edible products are exempt.",
             "severity": "MEDIUM",
             "remediation": "Declare dimensions in cm/inches for non-edible commodities sold by length, area or volume.",
         },
@@ -146,8 +146,12 @@ class RuleEngine:
         if rule_id == "net_quantity":
             if not re.search(r'\d', value):
                 return "Net quantity should contain a numeric value"
-            if not re.search(r'(g|kg|ml|l|gm|cm|m|ml|ltr|litre|kg|Kg|ML|L)', value, re.IGNORECASE):
-                return "Net quantity should specify a unit (g, kg, ml, L)"
+            # SI mass/volume units (weight, measure) or count units (number):
+            # rule 6(1)(c) accepts net quantity by weight, measure OR number.
+            if not re.search(
+                r'(g|kg|ml|l|gm|cm|m|ml|ltr|litre)', value, re.IGNORECASE
+            ) and not re.search(r'\d\s*(?:n|nos?|no\.?|pcs?|pieces?|count)\b', value, re.IGNORECASE):
+                return "Net quantity should specify a unit (g, kg, ml, L) or count unit (N, nos)"
 
         if rule_id == "month_year_manufacture":
             if not re.search(r'\d{4}', value) and not re.search(r'\d{2}/\d{2}', value):

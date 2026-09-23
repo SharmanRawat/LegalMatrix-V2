@@ -62,7 +62,8 @@ interface ManualOverride {
 
 interface InspectionDetail {
   inspection_id: string
-  timestamp: string
+  timestamp?: string
+  created_at?: string
   status: string
   method: string
   images_processed: number
@@ -304,7 +305,7 @@ export default function InspectionDetailPage() {
                   <div>
                     <h1 className="text-xl font-bold">{t('Status:')} {tStatus(data.status)}</h1>
                     <p className="text-sm opacity-80">
-                      {data.inspection_id} • {new Date(data.timestamp).toLocaleString()}
+                      {data.inspection_id} • {new Date(data.created_at ?? data.timestamp ?? '').toLocaleString()}
                       {data.method && <span> • Model: {data.method}</span>}
                     </p>
                   </div>

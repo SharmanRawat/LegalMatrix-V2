@@ -529,9 +529,18 @@ class RegexFieldClassifier:
         # duplicates the leading digit ('NETQTY.:2' + '250 ml (228 g)'), so a
         # short stray number right after the keyword is skipped.
         m = re.search(
-            r"(?:NET\s*(?:WT|QTY|QUANTITY|CONTENT|MASS)\.?\s*[:.]?\s*(?:\d{1,2}\s+)?)"
-            r"([\d.,]+\s*(?:g|kg|gm|mg|ml|cl|L|l|litre|liter|mcm|m|cm|mm|pc|pcs|pieces?|no\.?)\b"
+            r"(?:NET\s*(?:WT|QTY|QUANTITY|CONTENT|MASS|UTY|UTT|UTY\.|QTTY)\.?\s*[:.]?\s*(?:\d{1,2}\s+)?)"
+            r"([\d.,]+\s*(?:g|kg|gm|mg|ml|cl|L|l|litre|liter|mcm|m|cm|mm|pc|pcs|pieces?|no\.?|n|nos)\b"
             r"(?:\s*\(\s*[\d.,]+\s*(?:g|kg|gm|mg|ml|cl|L|l|litre|liter)\s*\))?)",
+            text, re.IGNORECASE,
+        )
+        if m:
+            return m.group(1)
+        # Value-before-keyword: e.g. "200N Net Uty." (OCR reading order). Scoped
+        # to mangled 'UTY' to avoid changing the frozen corpus (product 16 has
+        # clean 'NET QUANTITY').
+        m = re.search(
+            r"([\d.,]+\s*(?:n|nos|pcs?|pc)\b)\s+NET\s*(?:UTY|UTT|U\.?TY|QTTY)\b",
             text, re.IGNORECASE,
         )
         return m.group(1) if m else ""
@@ -561,11 +570,12 @@ class RegexFieldClassifier:
         has_nutrition_100 = bool(
             re.search(r"\bper\s*100\s*(g|gm|ml|gms)\b|\b%rda\b|\bservings?\s*per", joined)
         )
+        has_mangled_net_kw = bool(re.search(r"\bnet\s*(uty|utt|u\.?ty)\b", joined, re.I))
         out = []
         for i, line in enumerate(lines):
             text = str(line.get("text", "") or "").strip()
             m = re.match(
-                r"^(\d+(?:\.\d+)?)\s*(g|kg|gm|mg|ml|cl|L|l|litre|litres|liter|m|cm|mm)"
+                r"^(\d+(?:\.\d+)?)\s*(g|kg|gm|mg|ml|cl|L|l|litre|litres|liter|m|cm|mm|n|nos?|pcs?|pc|pieces?|count)"
                 r"(\s*\(\s*\d+(?:\.\d+)?\s*(?:g|kg|gm|mg|ml|cl|L|l|litre|litres|liter)\s*\))?"
                 r"\s*\.?$",
                 text, re.IGNORECASE,
@@ -585,6 +595,11 @@ class RegexFieldClassifier:
             value = f"{num}{unit}{parenthetical}" if parenthetical else f"{num}{unit}"
             if unit in ("kg", "l", "litre", "litres", "liter"):
                 out.append((value, i))
+            elif unit in ("n", "nos", "no", "pcs", "pc", "pieces", "piece", "count"):
+                # Only admit count-unit bare line when there's a mangled NET keyword nearby
+                # (product1 case). Keeps frozen corpus (product16 has clean 'NET QUANTITY:') inert.
+                if has_mangled_net_kw:
+                    out.append((value, i))
             elif num_v >= 10 and re.search(r"(?:\.0+|[05])$", num):
                 out.append((value, i))
         return out
@@ -596,7 +611,7 @@ class RegexFieldClassifier:
         """Pick the bare net-quantity candidate that sits next to a real
         'Net Quantity:' label, preferring integer pack sizes over the
         decimal rows of the nutrition table."""
-        kw = re.compile(r"\b(net|netqty|netwt|quantity|qty|wt|weight|content)\b", re.I)
+        kw = re.compile(r"\b(net|netqty|netwt|quantity|qty|wt|weight|content|uty|utt|uty\.)\b", re.I)
         kw_idx = [
             i for i, ln in enumerate(lines)
             if kw.search(str(ln.get("text", "") or ""))

@@ -771,8 +771,24 @@ def _dimensions_relevant(decl: Dict) -> bool:
     """Rule 6(1)(g): dimensions are required only for non-edible commodities
     sold by dimensions (garments, cables, electronics, etc.)."""
     edible = str(decl.get("edible", "") or "").strip().lower()
-    if edible in ("no", "false", "n", "non_edible", "non-edible", "non edible"):
+    if edible not in ("no", "false", "n", "non_edible", "non-edible", "non edible"):
+        return False
+    nq = str(decl.get("net_quantity", "") or "").strip().lower()
+    if not nq:
+        # No sale-mode evidence: do not demand dimensions. Rules only fire on
+        # positive evidence, so an unreadable net quantity cannot produce a
+        # spurious MEDIUM violation.
+        return False
+    # Sold by count → not by dimensions
+    if re.search(r"\d+\s*(?:n|nos?|no\.?|pcs?|pieces?|count|sheets?|rolls?|stems?|tips?|tabs?)\b", nq):
+        return False
+    # Sold by length/area → by dimensions (garments, cables, electronics…)
+    if re.search(r"\d+\s*(?:cm|mm|m\b|metre|meter|inch(?:es)?|ft\.?|feet|sq\.?\s*(?:m|cm|ft))\b", nq):
         return True
+    # Sold by weight/volume → not by dimensions
+    if re.search(r"\d+\s*(?:g|kg|gm|mg|ml|cl|l\b|litre|liter)\b", nq):
+        return False
+    # Unknown/other → conservative: no dimensions demand.
     return False
 
 
