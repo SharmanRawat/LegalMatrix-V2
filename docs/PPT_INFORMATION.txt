@@ -294,8 +294,8 @@ TESTING / VALIDATION
     act as a frozen oracle — rule-engine behaviour is audited cell-by-cell
     against it before any merge (backend/scripts/pipeline_audit.py).
   - Field data: 70+ real label photos in images/; live DB currently holds
-    57 inspections (24 COMPLIANT · 32 POTENTIAL_VIOLATION · 1
-    REVIEW_REQUIRED) across 112 images — all generated through the real
+    54 inspections (25 COMPLIANT · 28 POTENTIAL_VIOLATION · 1
+    REVIEW_REQUIRED) across 106 images — all generated through the real
     pipeline, not seeded screenshots.
 
 DEMO PRODUCTS (seeded: 12 configurations from real photos)
@@ -318,14 +318,14 @@ JUDGE-FACING DEMO WALKTHROUGH (sequence that wins)
      corrected row, original stays in manual_overrides.
 
 NUMBERS PANEL LIKES (one-liner stats for the slide footer)
-  • 297 tests passing · 57 live inspections · 112 evidence images · 70+ real
+  • 297 tests passing · 54 live inspections · 106 evidence images · 70+ real
     label photos · 12 demo products · 10 extracted fields + derived address ·
-    7 rules · 5-axis radar · CPU-only inference (no GPU)
+    7 rules · 6-axis radar · CPU-only inference (no GPU)
 
 SLIDE-READY COPY
   Title: Validated — Proof, Not Screenshots
   • 297 automated tests · golden-statutory audit against 70+ real label photos
-  • Live demo: 57 inspections, 24 COMPLIANT, 32 flagged, 1 review — generated
+  • Live demo: 54 inspections, 25 COMPLIANT, 28 flagged, 1 review — generated
     through the real pipeline
   • Judge walkthrough: live audit script → end-to-end inspect → Evidence
     Planner trace → QR verification → instructor correction

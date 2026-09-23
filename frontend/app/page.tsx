@@ -32,6 +32,31 @@ const ANALYZE_STEPS: { label: string; desc: string; Icon: LucideIcon }[] = [
   { label: 'Finalizing report', desc: 'Scoring and evidence pack', Icon: FileCheck2 },
 ]
 
+/** One emitted stage event from the live pipeline log (POST /api/inspect with
+ * an X-Progress-Token, polled at GET /api/inspect/progress/{token}). */
+interface ProgressEvent {
+  stage: 'upload' | 'start' | 'extract' | 'ocr' | 'slm' | 'merge' |
+          'compliance' | 'font' | 'evidence' | 'done' | string
+  status?: string
+  ts?: number
+  images?: number
+  image?: number | string
+  total?: number
+  file?: string
+  lines?: number
+  fields_found?: number
+  classifier?: string
+  confidence?: number
+  missing?: number
+  passed?: number
+  total_rules?: number
+  measured?: string
+  heatmaps?: number
+  inspection_id?: string
+  score?: number
+  reason?: string
+}
+
 export default function Home() {
   const router = useRouter()
   const [selectedImages, setSelectedImages] = useState<File[]>([])
@@ -40,10 +65,12 @@ export default function Home() {
   const [captureTarget, setCaptureTarget] = useState<LabelType>('front')
   const [loading, setLoading] = useState(false)
   const [elapsed, setElapsed] = useState(0)
+  const [progressEvents, setProgressEvents] = useState<ProgressEvent[]>([])
   const [cameraActive, setCameraActive] = useState(false)
   const [sameProduct, setSameProduct] = useState(false)
   const [viewingPreview, setViewingPreview] = useState<number | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const progressPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -59,6 +86,7 @@ export default function Home() {
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current)
+      if (progressPollRef.current) clearInterval(progressPollRef.current)
       stopCamera()
     }
   }, [])
@@ -188,17 +216,40 @@ export default function Home() {
 
     setLoading(true)
     setElapsed(0)
+    setProgressEvents([])
 
     if (timerRef.current) clearInterval(timerRef.current)
     timerRef.current = setInterval(() => setElapsed(s => s + 1), 1000)
+
+    // Live pipeline log: tag the POST with a pollable progress token and
+    // stream its OCR → SLM → rules → evidence stages into the UI.
+    const progressToken =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `lm-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+
+    if (progressPollRef.current) clearInterval(progressPollRef.current)
+    progressPollRef.current = setInterval(async () => {
+      try {
+        const resp = await api.get(`/api/inspect/progress/${progressToken}`, { timeout: 15000 })
+        const events = (resp.data?.events as ProgressEvent[] | undefined) ?? []
+        if (events.length) setProgressEvents(events)
+      } catch {
+        // transient poll error — the next tick retries
+      }
+    }, 1500)
 
     const formData = new FormData()
     selectedImages.forEach(image => formData.append('images', image))
     imageTypes.forEach(type => formData.append('label_types', type))
 
     try {
-      const response = await api.post('/api/inspect', formData, { timeout: 600000 })
+      const response = await api.post('/api/inspect', formData, {
+        timeout: 600000,
+        headers: { 'X-Progress-Token': progressToken },
+      })
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+      if (progressPollRef.current) { clearInterval(progressPollRef.current); progressPollRef.current = null }
       toast.success('Inspection completed!')
       if (response.data?.inspection_id) {
         router.push(`/inspection/${response.data.inspection_id}`)
@@ -208,6 +259,7 @@ export default function Home() {
       setLoading(false)
     } catch (error: unknown) {
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+      if (progressPollRef.current) { clearInterval(progressPollRef.current); progressPollRef.current = null }
       console.error('Error:', error)
       const msg =
         (error as { code?: string } | null)?.code === 'ECONNABORTED'
@@ -231,9 +283,70 @@ export default function Home() {
     return { start: 0, len: 0 }
   }
 
-  // Analyzing checklist — advances roughly every 30s of processing time
+  // Live pipeline log — human-readable text for each emitted stage event.
+  const stageText = (e: ProgressEvent): string => {
+    switch (e.stage) {
+      case 'upload':
+        return 'Images received — starting pipeline…'
+      case 'start':
+        return `Pipeline started — ${e.images ?? 0} image(s) queued`
+      case 'ocr':
+        if (e.status === 'running') return `OCR — scanning text blocks on ${e.image ?? ''}…`
+        if (e.status === 'multi_pass') return `OCR — re-scanning degraded digits (${e.lines ?? 0} blocks)`
+        return `OCR — read ${e.lines ?? 0} text blocks on ${e.image ?? ''}`
+      case 'slm':
+        if (e.status === 'running') return 'SLM classifier — mapping text to 10 legal fields…'
+        if (e.status === 'regex_fallback') return 'SLM unavailable — regex fallback used'
+        return `SLM classifier — fields mapped (${e.classifier ?? 'llm+regex'})`
+      case 'extract':
+        if (e.status === 'running') return `OCR — reading image ${e.image}/${e.total}${e.file ? ` (${e.file})` : ''}…`
+        return `Image ${e.image}/${e.total} — OCR ${e.lines ?? 0} text blocks · SLM ${e.fields_found ?? 0}/10 fields (${e.classifier ?? ''})`
+      case 'merge':
+        return `Reading label fields — ${e.fields_found ?? 0}/10 merged · ${e.missing ?? 0} missing`
+      case 'compliance':
+        if (e.status === 'running') return 'Applying legal-metrology rule engine…'
+        return `Rule engine — ${e.passed ?? 0}/${e.total_rules ?? 0} rules passed`
+      case 'font':
+        if (e.status === 'running') return 'Measuring font height vs the legal minimum…'
+        return `Font measurement — ${e.measured ?? 'done'}`
+      case 'evidence':
+        if (e.status === 'running') return 'Rendering heat-maps & storing evidence…'
+        return `Evidence — ${e.heatmaps ?? 0} heat-map(s) rendered`
+      case 'done':
+        return `Complete — ${e.inspection_id ?? ''} · ${e.status ?? ''} · score ${e.score ?? 0}%`
+      default:
+        return e.stage
+    }
+  }
+
+  const statusDot = (e: ProgressEvent): string => {
+    if (e.stage === 'done' || e.status === 'done') return 'bg-success'
+    if (e.status === 'running') return 'bg-accent animate-pulse'
+    if (e.status === 'regex_fallback') return 'bg-warning'
+    return 'bg-surface-border'
+  }
+
+  // Which checklist step each pipeline stage maps to.
+  const STAGE_STEP: Record<string, number> = {
+    upload: 0, start: 0,
+    extract: 1, ocr: 1, slm: 1, merge: 1,
+    compliance: 2,
+    font: 3,
+    evidence: 4, done: 4,
+  }
+
+  // Analyzing checklist — driven by real backend progress events; the elapsed
+  // timer only covers the gap before the first poll lands.
+  const lastStage = progressEvents.length
+    ? progressEvents[progressEvents.length - 1].stage
+    : null
   const activeStep = loading
-    ? Math.min(ANALYZE_STEPS.length - 1, Math.floor(elapsed / 30))
+    ? Math.min(
+        ANALYZE_STEPS.length - 1,
+        lastStage !== null && STAGE_STEP[lastStage] !== undefined
+          ? STAGE_STEP[lastStage]
+          : Math.floor(elapsed / 30),
+      )
     : -1
 
   return (
@@ -467,6 +580,33 @@ export default function Home() {
                   )
                 })}
               </ul>
+
+              {/* Live pipeline log — real backend stage events */}
+              <div className="mt-3 rounded-lg border border-accent/25 bg-accent-soft/50 p-3">
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <p className="text-[11px] font-semibold text-accent flex items-center gap-1.5">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-60" />
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-accent" />
+                    </span>
+                    Live pipeline — OCR → SLM → rules
+                  </p>
+                  <span className="text-[10px] text-text-muted font-mono whitespace-nowrap">
+                    {progressEvents.length} events · {elapsed}s
+                  </span>
+                </div>
+                <div className="space-y-1 max-h-40 overflow-y-auto pr-1" aria-live="polite">
+                  {progressEvents.length === 0 && (
+                    <p className="text-[11px] text-text-muted">Uploading images…</p>
+                  )}
+                  {progressEvents.slice(-10).map((e, i) => (
+                    <div key={i} className="flex items-start gap-2 text-[11px] text-text-secondary">
+                      <span className={`mt-1.5 h-1.5 w-1.5 rounded-full shrink-0 ${statusDot(e)}`} />
+                      <span className="leading-snug">{stageText(e)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
 

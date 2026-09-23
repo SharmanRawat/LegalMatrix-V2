@@ -1,9 +1,9 @@
 """User repository — authentication store with PBKDF2 password hashing."""
 import hashlib
 import secrets
-from datetime import datetime, timezone
 
 from app.database.connection import get_connection
+from app.services.clock import now_ist
 
 ROLES = ("ADMIN", "INSPECTOR", "VIEWER")
 
@@ -31,7 +31,7 @@ def create_user(username: str, name: str, role: str, password: str, db_path=None
     if role.upper() not in ROLES:
         raise ValueError(f"Invalid role: {role}")
     pwd_hash, salt = hash_password(password)
-    now = datetime.now(timezone.utc).isoformat()
+    now = now_ist().isoformat()
     conn = get_connection(db_path)
     try:
         conn.execute(

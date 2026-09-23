@@ -1,0 +1,95 @@
+IDEA TITLE (limit: 100 characters — all options fit)
+
+A) LegalMatrix: point a phone at a label, get a court-defensible compliance report
+B) LegalMatrix — AI legal-metrology inspection for packaged commodities
+C) LegalMatrix: an AI inspector that reads packed-product labels and checks them against the law
+D) LegalMatrix: checking the fine print on every packet, automatically
+
+
+IDEA DESCRIPTION (limit: 50,000 characters)
+
+WHERE THE IDEA CAME FROM
+
+Ask anyone what "consumer protection" means and you'll get slogans. Ask a legal-metrology officer what their Tuesday looks like and you get something else: a shelf, a stack of packets, and a notebook.
+
+The Legal Metrology (Packaged Commodities) Rules, 2011 — amended repeatedly, most recently through 2026 — are surprisingly prescriptive. Every packet on that shelf must declare the manufacturer's name and registered address, the common name of what's inside, the net quantity with its SI unit, the month and year it was made, the maximum retail price with all taxes included, a consumer-care contact, and for goods sold by dimension, the dimensions themselves. Seven rules' worth of obligations, printed in type that's often as small as the law allows.
+
+Checking it is still almost entirely manual. An officer picks up a packet, reads the label, does "MRP divided by net quantity" in their head to see if the unit sale price adds up, squints at whether the date is a real date, and writes down what they found. Two officers can look at the same packet and write two different reports. And the report itself is thin evidence six months later, because it describes a photo instead of containing it — by the time a case reaches adjudication, nobody can prove what the label actually said.
+
+That gap — between "the law requires proof" and "the paperwork has none" — is where our idea started.
+
+WHAT WE SET OUT TO BUILD
+
+We wanted an answer to three questions, from nothing but one to three photographs taken on a phone:
+
+1. What does this label actually declare? (extraction)
+2. Does that comply with the 2011 Rules? (evaluation)
+3. Can we prove our answer later? (evidence)
+
+Everything in the system exists because of one of those three questions. If a feature doesn't help extract, evaluate, or prove, it isn't in.
+
+HOW IT WORKS, STEP BY STEP
+
+Capture. The inspector opens the app in a browser — it's a Progressive Web App, so it installs on a phone and keeps working when the shop's Wi-Fi doesn't. One to three photos of the label go up; the backend assigns an inspection ID and the interface streams progress back while the pipeline runs.
+
+Extract. This is where a label photo stops being an "image" and becomes text. CPU-only OCR — the PP-OCR family through RapidOCR, running on ONNX Runtime — reads the frame and returns every line with a bounding box and a confidence. No GPU, no cloud round-trip; it runs on the laptop in the bag. Then a small language model (qwen2.5:3b, running locally through Ollama) reads the OCR lines and sorts them into the fields the statute cares about: which line is the manufacturer, which one is net quantity, which one is consumer care. We fuse that with regular-expression extractors for anything structured — prices, quantities, dates, email addresses, phone numbers. Neither source is trusted alone. The language model misreads formats it hasn't seen; the regex misses phrasings it wasn't written for; together they cover each other. Hindi and bilingual labels go through a Devanagari recognition model on the same path. What comes out is ten declared fields, plus an eleventh we derive — the manufacturer's address, pulled out of the blob the extractor returns for the manufacturer name.
+
+Evaluate. A rule engine — the statute written out as versioned data (rules.json), not buried in code — runs seven checks against those fields:
+
+- Are all the mandatory declarations present?
+- Is the MRP formatted properly, with the rupee symbol and a tax-inclusive value?
+- Does unit sale price equal MRP divided by net quantity, to two decimals?
+- Is the manufacturing date a real, parseable date — and does it agree with any other date on the pack?
+- Is there a consumer-care contact that actually looks like a contact: an email that is an email, a phone that is a phone?
+- Are dimensions declared, where the goods are sold by dimension?
+- Is the printed text tall enough? The font-size rule, which we'll come back to, because it turned into the interesting part.
+
+Each rule's result lands on a six-axis radar: declarations, pricing, dates, consumer care, font size, readability. Weights shift when an axis can't be verified, which we'll also come back to.
+
+Evidence. The part we care about most, honestly. Every inspection stores SHA-256 hashes over the uploaded images and over the results, ties them to a permanent inspection ID, and can export a PDF, JSON or CSV where the quoted label text sits beside the actual photograph, next to the rule citation and the measured values. The point is a document that doesn't need the person who wrote it to show up and explain it.
+
+THE HARD BITS (THE ONES THAT COST US SLEEP)
+
+Labels fight back. Glossy film reflects the shop lights straight into the OCR. Curved bottles bend every line at the edges. A sticker half-torn over an old MRP leaves a wound straight through the price. Text runs in three scripts on one panel. The OCR does its best and still produces junk: we've seen "R110.00" where the pack says "₹110.00", and "200N" where it means two hundred pieces. On one of our test packs, OCR read the line "Net Qty." as "Net uty." — and the system had to cope without falling over.
+
+That's why the extractor is a committee, not an oracle: the language model brings layout sense, the regex brings certainty about formats, and where they disagree the pipeline keeps the reading it can defend. Dates got their own reconciliation gate — if a pack shows a manufacturing date and a best-before that can't both be true, the system flags the conflict instead of picking a favourite.
+
+FONT SIZE: THE PART WE'RE PROUDDEST OF
+
+Here's a rule nobody enforces automatically: declaration text has to be printed at a minimum height — 1 mm up to 6 mm, depending on the net quantity of the pack. It's a real requirement (it's why packet fine print is the size it is), and checking it in the field means carrying a gauge and a steady hand.
+
+We wanted the app to measure it from a photo. The problem is obvious once you say it out loud: a photo has pixels, the law has millimetres, and nothing in a JPEG knows how wide the real world is. So something in the frame has to declare its true size. We built a calibration chain, in order of trustworthiness:
+
+- A credit card (ISO/IEC 7810 — every card is exactly 85.60 by 53.98 mm) gives the best scale, good to about ±6%.
+- Failing that, the product's own barcode: EAN symbols have standardised dimensions, so the bars become a ruler, good to about ±15%.
+- Phone EXIF data is checked but never allowed to produce an automated verdict on its own.
+
+Then the measurement itself: OCR token boxes give the height of the declaration line in pixels; divide by the calibrated pixels-per-millimetre and you have a printed height in millimetres with an uncertainty band around it.
+
+Making this work in the wild taught us humility. The card detector needs a clean, unobstructed rectangle, and real photos kept refusing to provide one — fingers over an edge, the card half out of frame, a thumb cropping a corner. We reshoot; it improved. Then we measured the card we'd been taping to packs and found it sat about 22% off the standard size — it wasn't a real bank card at all. A detector that had been "working" would have been quietly wrong by a fifth. Meanwhile the barcode rung kept passing: one test photo calibrated at 37.29 pixels per millimetre, which produced the number we demo with today — measured printed height 1.96 mm, uncertainty ±0.29, against a statutory minimum of 1.0 mm. Comfortably compliant, and defensible down to the arithmetic.
+
+At one point we tore the whole feature out of the build, because the verdicts it produced weren't reliable enough to ship, then rebuilt it with the defensibility gates it deserved. It's back, it's validated, and the scars are visible in the commit history.
+
+The rule we refused to break: never fabricate a measurement. No trustworthy reference in frame means the answer is "CANNOT_MEASURE" — and the font axis on the radar drops its weight to zero, so the final score never pretends fine print was verified when it wasn't. Readings outside any plausible range are forced to manual review rather than converted into a confident-looking number. A green tick has to mean someone else could reproduce it.
+
+HOW WE KNOW IT WORKS
+
+Three layers, because "it demos well" isn't validation:
+
+- 297 automated tests — extraction, rule evaluation, the API, font measurement, access control. They run in about fifteen seconds and they gate every change.
+- A golden-statutory audit: seventy-odd real product labels, photographed and answered field-by-field by hand, kept byte-identical, so any pipeline change that shifts an answer shows up as a regression instead of a surprise.
+- Live use: 54 inspections run through the real app — 25 came back COMPLIANT, 28 flagged as potential violations, 1 held for review — persisting 106 evidence images. We can open any one of them and see the photo, the extracted text and the rule verdict side by side.
+
+The two-path demo we film comes straight from that set: a swab pack whose back panel carries declarations and a barcode measures up and passes cleanly; a curved glass bottle with no trustworthy reference in shot reports CANNOT_MEASURE and zeroes the axis. Both are the correct answers. That's the whole pitch in two photos.
+
+RUNS WHERE THE WORK IS
+
+No GPU, no cloud, no label photos leaving the premises — OCR, classifier and rules all run on commodity hardware, which matters for a Department that isn't going to ship enforcement data to a third-party API. The PWA works offline and syncs when it can. Interface and reports work in English and Hindi. Access is role-scoped behind an admin console, because an inspection record is somebody's enforcement case, not a public dataset.
+
+WHO IT'S FOR
+
+For the officer: minutes instead of handwriting, and a report they can lean on. For the adjudicating authority: an artefact with hashes, photos and quoted text instead of a recollection. For the Department: a versioned, machine-readable codification of the statute that any future tool — a marketplace checker, a licensing system, a dashboard — can call instead of re-implementing. And for the person buying the packet: the possibility that "is this label legal?" becomes a question with a fast, checkable answer.
+
+WHAT WE'D DO NEXT
+
+The list is honest rather than ambitious for its own sake: guide the capture flow so the app warns up front when a calibration reference is missing from the frame; print per-field measured text heights across the whole report, not just the headline rule; build a synthetic regression set with known pixel heights so font-measurement changes get validated numerically; extend rules.json as the statute gets amended further; and wire the API into marketplace-scale batch auditing, where a seller's entire catalogue gets checked overnight. Deployment isn't a promise we've made yet — what exists is a working, tested, offline-capable system, and the evidence that it does what it claims.

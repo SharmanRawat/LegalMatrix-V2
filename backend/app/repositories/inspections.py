@@ -1,12 +1,12 @@
 """Inspection repository — persistence for scans, compliance results and evidence."""
 import json
-from datetime import datetime, timezone
 
 from app.database.connection import get_connection
+from app.services.clock import now_ist
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return now_ist().isoformat()
 
 
 def save_inspection(inspection: dict, db_path=None) -> str:

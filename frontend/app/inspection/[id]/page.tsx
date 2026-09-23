@@ -332,6 +332,18 @@ export default function InspectionDetailPage() {
     }
   }
 
+  const downloadReport = async () => {
+    try {
+      await downloadBlob(
+        `/api/inspect/${id}/report`,
+        `LegalMatrix-Report-${id}.pdf`,
+      )
+      toast.success('PDF report downloaded!')
+    } catch {
+      toast.error('Failed to download PDF report')
+    }
+  }
+
   const score = data?.compliance_score ?? 0
 
   return (
@@ -754,10 +766,16 @@ export default function InspectionDetailPage() {
 
             <div className="flex flex-col sm:flex-row gap-3 animate-reveal" style={{ animationDelay: '400ms' }}>
               <button
-                onClick={downloadCertificate}
+                onClick={downloadReport}
                 className="flex-1 btn-primary flex items-center justify-center gap-2 font-semibold min-h-[44px]"
               >
-                <Award className="w-4 h-4" /> Certificate
+                <FileDown className="w-4 h-4" /> Download PDF Report
+              </button>
+              <button
+                onClick={downloadCertificate}
+                className="flex-1 btn-secondary flex items-center justify-center gap-2 font-semibold min-h-[44px]"
+              >
+                <Award className="w-4 h-4" /> QR Certificate
               </button>
               <button
                 onClick={() => downloadExport('json')}

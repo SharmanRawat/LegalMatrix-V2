@@ -1,0 +1,49 @@
+LegalMatrix — AI Legal-Metrology Inspection for Packaged Commodities
+SIH 2026 · Problem Statement PS 26034 · Ministry of Consumer Affairs, Department of Consumer Affairs (Legal Metrology)
+
+THE PROBLEM
+
+Under the Legal Metrology (Packaged Commodities) Rules, 2011 (as amended through 2026), every packaged commodity sold in India must declare on its principal display panel: the name and registered address of the manufacturer/importer/marketer; the common or generic name of the commodity; net quantity with SI unit; month and year of manufacture; the Maximum Retail Price inclusive of all taxes; consumer-care/grievance-redressal contact details; and dimensions for goods sold by dimension. Non-compliance is widespread in retail: misprinted or non-inclusive MRPs, missing net quantity, absent manufacture dates, incorrect unit sale prices and deliberately tiny declaration fonts appear on shelf after shelf.
+
+Enforcement rests with legal-metrology field inspectors who physically inspect retail shelves. The process today is manual and paper-driven: officers eyeball labels, perform mental arithmetic to compare MRP against unit sale price, and hand-write inspection reports. These reports are slow to produce, inconsistent between officers, and difficult to defend in adjudication because they rarely tie a specific verdict to a specific photograph and the exact label text. The Department needs to accelerate inspection while strengthening, not weakening, the evidentiary quality of every report.
+
+WHY THIS IS A HARD COMPUTATIONAL PROBLEM
+
+Product labels are among the noisiest documents in the wild: glossy and curved packaging distorts text; declaration fonts are deliberately tiny; labels mix English, Hindi (Devanagari) and bilingual lines; OCR frequently mangles tokens; watermarks and torn stickers corrupt lines. Violations themselves are subtle: an MRP can be printed and still violate the rules if the container is under-filled relative to declared quantity, if the price is not inclusive of taxes, or if the unit sale price does not equal MRP divided by net quantity. Finally, enforcement demands evidence rather than classification: a defensible report must quote the exact extracted label text, show the source photograph, and be tamper-evident.
+
+OUR SOLUTION
+
+LegalMatrix is an end-to-end "inspect → evaluate → evidence" platform that runs entirely on commodity hardware:
+
+1. CAPTURE — The inspector photographs a product label (1–3 images) through the browser or the offline-capable Progressive Web App. A FastAPI backend fields the upload and returns a live inspection ID.
+
+2. EXTRACT — CPU-only OCR (PP-OCR family via RapidOCR, ONNX Runtime) reads every line with word-level bounding boxes and confidences; a compact on-device LLM (qwen2.5:3b via Ollama) classifies OCR lines into statutory declaration fields, fused with deterministic regex extractors for structured values (MRP, net quantity, dates, consumer-care contacts). Devanagari recognition models support Hindi and bilingual labels. Ten declaration fields are extracted, plus a derived manufacturer-address field.
+
+3. EVALUATE — A statute-codified, versioned rule engine (rules.json) evaluates all seven compliance rules against the extracted fields: mandatory-declaration presence, MRP format and tax inclusivity, unit sale price = MRP ÷ net quantity, manufacturing-date validity and reconciliation, consumer-care completeness, dimensions where applicable, and minimum printed font height.
+
+4. EVIDENCE — Every scan persists SHA-256 cryptographic hashes over its inputs and outputs and exports an evidence-backed PDF/JSON/CSV report that places the exact quoted label text beside the source photograph with rule citations — a record designed to survive legal challenge.
+
+KEY INNOVATIONS
+
+• STATUTORY FONT-SIZE MEASUREMENT IN MILLIMETRES (our primary differentiator). The Rules prescribe minimum printed numeral heights (1–6 mm, tiered by net quantity). LegalMatrix measures real printed height: a physically traceable in-frame reference calibrates pixels to millimetres (ISO/IEC 7810 card at ±6%, product barcode at ±15%, phone EXIF camera metrics never trusted for an automated verdict), OCR token boxes supply glyph height, and geometric plausibility gates reject implausible readings. The governing principle is honesty: when no usable reference exists, the system reports CANNOT_MEASURE and drops the font-axis weight to zero rather than inventing a number. A live field-validated measurement: 1.96 mm ± 0.29 against a 1.0 mm statutory minimum, rendered in the PDF report and scored on the radar.
+
+• SIX-AXIS COMPLIANCE RADAR — declarations, pricing, dates, consumer care, font size and readability — with dynamic re-weighting so unverifiable axes honestly reduce confidence instead of faking it.
+
+• GOLDEN-STATUTORY AUDIT HARNESS — a byte-identical corpus of 70+ real Indian product-label photographs with gold-answer JSON enables regression auditing of every extraction and rule-engine change.
+
+• FULLY OFFLINE, CPU-ONLY, BILINGUAL — no GPU and no cloud; a PWA that works in low-connectivity field conditions, in English and Hindi, on the hardware inspectors already carry.
+
+VALIDATION AND RESULTS
+
+• 297 automated tests passing across rule evaluation, extraction, API, font measurement and access scoping.
+• Golden-statutory audit against 70+ real label photographs.
+• 54 live inspections persisted (25 COMPLIANT, 28 POTENTIAL_VIOLATION, 1 REVIEW_REQUIRED) across 106 evidence images — all generated through the real pipeline.
+• End-to-end field validation of the font-measurement chain on freshly photographed packs: barcode-calibrated token measurement produced a genuine COMPLIANT verdict (1.96 mm vs 1.0 mm required) with a scored radar axis, while an uncalibrated curved-glass pack correctly fell back to an honest CANNOT_MEASURE with zero score contribution — both paths demonstrable live.
+
+EXPECTED IMPACT
+
+For the Department: faster, standardised shelf inspections with court-defensible, tamper-evident digital reports, audit trails over officer decisions, and a reusable, versioned codification of the statute that any enforcement module can invoke. For consumers: verifiable label compliance at the point of sale. For the ecosystem: a CPU-only, offline-first architecture deployable on existing field devices, with an API suitable for integration into e-commerce marketplace compliance checks.
+
+FUTURE SCOPE
+
+Guided capture UX that tells the inspector when a calibration reference is missing; per-field measured numeral heights across the full report; quantitative regression sets of synthetic labels with known heights; expansion of the rules corpus to further amended statutes; and marketplace-scale batch auditing.

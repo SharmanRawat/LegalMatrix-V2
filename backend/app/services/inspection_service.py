@@ -18,6 +18,7 @@ from app.config import VLM_RESCUE_ENABLED, VLM_RESCUE_MODEL, VLM_RESCUE_CONFIDEN
 from app.core.rule_engine import rule_engine
 from app.repositories import inspections as inspection_repo
 from app.services import compliance_scorer, heatmap_generator, preprocessing
+from app.services.clock import now_ist
 from app.services.font_measurement import FontMeasurementService
 from app.services.manufacturer_address import extract_manufacturer_address
 from app.services.ocr_transcript import build_ocr_transcript
@@ -434,7 +435,7 @@ def _reconcile_date_ordering(merged: Dict, results: List[Dict]) -> None:
 
 def next_inspection_id() -> str:
     import secrets
-    return f"LGM-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3).upper()}"
+    return f"LGM-{now_ist().strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3).upper()}"
 
 
 def merge_extractions(results: List[Dict],
@@ -837,7 +838,7 @@ def apply_manual_overrides(inspection_id: str, overrides: Dict, user_id: Optiona
             "original": original,
             "corrected": corrected,
             "by_user_id": user_id,
-            "at": datetime.now().isoformat(),
+            "at": now_ist().isoformat(),
         }
     if override_log:
         meta["manual_overrides"] = override_log
@@ -1272,7 +1273,7 @@ def run_inspection(
 
     result = {
         "inspection_id": inspection_id,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_ist().isoformat(),
         "method": method,
         "rule_version": rule_engine.version,
         "images_processed": len(image_paths),

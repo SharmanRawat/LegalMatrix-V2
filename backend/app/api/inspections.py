@@ -583,7 +583,7 @@ def _build_pdf(result: Dict) -> bytes:
     pdf.ln(3)
 
     # ── Inspection meta (2-col grid) ──
-    ts = result.get("timestamp", "")
+    ts = result.get("timestamp") or result.get("created_at") or ""
     try:
         ts_disp = datetime.fromisoformat(ts).strftime("%d %b %Y, %I:%M %p")
     except (TypeError, ValueError):

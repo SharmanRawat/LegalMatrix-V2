@@ -663,14 +663,28 @@ class SmartOCRService:
         lab = cv2.cvtColor(orig, cv2.COLOR_BGR2LAB)
         l_chan, a_chan, b_chan = cv2.split(lab)
         clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(4, 4))
-        variants = [
-            ("otsu", cv2.cvtColor(otsu, cv2.COLOR_GRAY2BGR), 1.0, 1.0),
-            ("invert", cv2.cvtColor(255 - gray, cv2.COLOR_GRAY2BGR), 1.0, 1.0),
-            ("clahe4", cv2.merge((clahe.apply(l_chan), a_chan, b_chan)), 1.0, 1.0),
-        ]
         h, w = gray.shape[:2]
-        up = cv2.resize(orig, (w * 2, h * 2), interpolation=cv2.INTER_CUBIC)
-        variants.append(("up2", up, 0.5, 0.5))
+        # Resolution budget: on large photos (typical phone shots are 3000-4000px
+        # wide) full-res variants — and especially a naive 2x upscale — are
+        # wasted CPU. OCR's useful pixel density is reached way below that, so
+        # cap every variant to 2048px and only upscale genuinely small images.
+        up_scale = 2.0 if max(h, w) <= 1200 else 1.0
+        up = cv2.resize(orig, (int(w * up_scale), int(h * up_scale)),
+                        interpolation=cv2.INTER_CUBIC)
+        variants = []
+        for name, arr in [
+            ("otsu", cv2.cvtColor(otsu, cv2.COLOR_GRAY2BGR)),
+            ("invert", cv2.cvtColor(255 - gray, cv2.COLOR_GRAY2BGR)),
+            ("clahe4", cv2.merge((clahe.apply(l_chan), a_chan, b_chan))),
+            ("up2", up),
+        ]:
+            ah, aw = arr.shape[:2]
+            if max(ah, aw) > 2048:
+                s = 2048.0 / max(ah, aw)
+                arr = cv2.resize(arr, (int(aw * s), int(ah * s)),
+                                 interpolation=cv2.INTER_AREA)
+                ah, aw = arr.shape[:2]
+            variants.append((name, arr, w / aw, h / ah))
         out = []
         for name, arr, sx, sy in variants:
             try:
