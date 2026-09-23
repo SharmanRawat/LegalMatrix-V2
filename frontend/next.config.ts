@@ -6,8 +6,13 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   output: 'standalone',
   experimental: {
-    // Next's rewrite proxy kills upstream responses after 30s by default;
-    // AI scans take ~30-40s per image-set, so lift the cap to 5 minutes.
+    // The rewrite proxy buffers upload bodies; Next 16 caps that at 10MB by
+    // default and forwards a TRUNCATED multipart body past the cap, which
+    // makes the backend hang waiting for bytes that never arrive (multi-photo
+    // uploads are 4-9MB phone JPEGs each and easily exceed 10MB).
+    proxyClientMaxBodySize: '64mb',
+    // OCR+SLM scans take ~25-60s (more on cold model load); the proxy must
+    // keep waiting for the upstream response that long.
     proxyTimeout: 300000,
   },
   async rewrites() {
