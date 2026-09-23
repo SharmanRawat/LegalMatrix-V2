@@ -222,33 +222,34 @@ const HI: Record<string, string> = {
   'Start one now': 'अभी एक शुरू करें',
   'Failed to load dashboard': 'डैशबोर्ड लोड नहीं हो सका',
 
-  // ---- Font Measurement (roadmap) ----
+  // ---- Font Measurement (live) ----
   'Font Size Measurement': 'फ़ॉन्ट आकार माप',
-  'Roadmap · Coming soon': 'रोडमैप · जल्द आ रहा है',
-  'Legal Metrology (Packaged Commodities) Rules 2011 require minimum numeral heights that scale with net quantity (1–4 mm normal, 2–6 mm embossed). Measuring them reliably is the next engineering milestone.':
-    'विधिक मेट्रोलॉजी (पैक किए गए उपभोक्ता सामान) नियम 2011 के अनुसार शुद्ध मात्रा के अनुसार अंकों की न्यूनतम ऊँचाई आवश्यक है (सामान्य 1–4 मिमी, उभरे हुए 2–6 मिमी)। इन्हें विश्वसनीय रूप से मापना अगला इंजीनियरिंग माइलस्टोन है।',
+  'Live · Validated in the field': 'लाइव · क्षेत्र में सत्यापित',
+  'Live and validated on real field photos': 'असली फ़ील्ड फ़ोटो पर लाइव और सत्यापित',
+  'A barcode-calibrated measurement produced a real COMPLIANT font verdict — 1.96 mm measured vs 1.0 mm required (±0.29 mm uncertainty) — rendered in the PDF report and scored on the Font Size radar axis (weight 0.20).':
+    'बारकोड-अंशांकित माप ने असली COMPLIANT फ़ॉन्ट निर्णय दिया — माप 1.96 मिमी बनाम आवश्यक 1.0 मिमी (±0.29 मिमी अनिश्चितता) — PDF रिपोर्ट में दर्ज और फ़ॉन्ट आकार रडार अक्ष (वज़न 0.20) पर स्कोर किया गया।',
+  'Legal Metrology (Packaged Commodities) Rules 2011 require minimum numeral heights that scale with net quantity (1–4 mm normal, 2–6 mm embossed). The pipeline now measures real label numerals against these thresholds — and reports an honest CANNOT_MEASURE when it cannot.':
+    'विधिक मेट्रोलॉजी (पैक किए गए उपभोक्ता सामान) नियम 2011 के अनुसार शुद्ध मात्रा के अनुसार अंकों की न्यूनतम ऊँचाई आवश्यक है (सामान्य 1–4 मिमी, उभरे हुए 2–6 मिमी)। अब पाइपलाइन असली लेबल के अंकों को इन सीमाओं के विरुद्ध मापती है — और जब माप संभव न हो तो ईमानदारी से CANNOT_MEASURE बताती है।',
   'Try a new inspection': 'नई जांच आज़माएँ',
   'What the pipeline does today': 'पाइपलाइन आज क्या करती है',
   'Calibration chain (credit card → barcode → EXIF)': 'अंशांकन श्रृंखला (क्रेडिट कार्ड → बारकोड → EXIF)',
   'A physically traceable reference converts pixels to millimetres: an ISO/IEC 7810 card (85.60 × 53.98 mm) beside the product is the exact reference; a product barcode is coarser; phone EXIF camera-metrics is never an automated verdict.':
     'एक भौतिक रूप से अनुरेखणीय संदर्भ पिक्सेल को मिलीमीटर में बदलता है: उत्पाद के पास रखा ISO/IEC 7810 कार्ड (85.60 × 53.98 मिमी) सटीक संदर्भ है; उत्पाद बारकोड मोटा है; फ़ोन EXIF कैमरा-मेट्रिक्स कभी स्वचालित निर्णय नहीं देती।',
   'Honest measurement, never fabricated': 'ईमानदार माप, कभी निर्मित नहीं',
-  'When a calibration reference is present, numeral height is measured in millimetres with an explicit uncertainty band. When none is present, the axis is excluded from the score and reported as REVIEW_REQUIRED with an auditable reason — we never output a millimetre value we cannot defend.':
-    'जब अंशांकन संदर्भ मौजूद होता है, तो अंकों की ऊँचाई स्पष्ट अनिश्चितता सीमा के साथ मिलीमीटर में मापी जाती है। जब कोई संदर्भ नहीं होता, तो अक्ष को स्कोर से बाहर रखा जाता है और पता लगाने योग्य कारण के साथ REVIEW_REQUIRED घोषित किया जाता है — हम कभी ऐसा मिलीमीटर मान नहीं निकालते जिसका हम बचाव न कर सकें।',
+  'When a calibration reference is present, numeral height is measured in millimetres with an explicit uncertainty band. When none is present, the axis weight drops to 0 and the reading is reported as CANNOT_MEASURE with an auditable reason — we never output a millimetre value we cannot defend.':
+    'जब अंशांकन संदर्भ मौजूद होता है, तो अंकों की ऊँचाई स्पष्ट अनिश्चितता सीमा के साथ मिलीमीटर में मापी जाती है। जब कोई संदर्भ नहीं होता, तो अक्ष का वज़न 0 हो जाता है और रीडिंग पता लगाने योग्य कारण के साथ CANNOT_MEASURE घोषित होती है — हम कभी ऐसा मिलीमीटर मान नहीं निकालते जिसका हम बचाव न कर सकें।',
   'Defensibility gates on every reading': 'हर रीडिंग पर बचाव-योग्यता द्वार',
   'Each text region passes geometric and glyph sanity checks. A measured height outside the plausible range forces manual review, and the uncalibrated lower-half heuristic never produces an automated verdict.':
     'प्रत्येक टेक्स्ट क्षेत्र ज्यामितीय और ग्लिफ़ सत्यापन से गुजरता है। संभावित सीमा से बाहर मापी गई ऊँचाई मैन्युअल समीक्षा के लिए बाध्य करती है, और बिना अंशांकन वाला निचला-आधा ह्यूरिस्टिक कभी स्वचालित निर्णय नहीं देता।',
   "What's next": 'आगे क्या',
   'Guided calibration-card capture flow in the capture UI — the inspector is told when a reference is missing.':
     'कैप्चर UI में निर्देशित अंशांकन-कार्ड कैप्चर प्रवाह — निरीक्षक को बताया जाता है कि संदर्भ गायब है।',
-  'Per-field measured numeral height rendered on the PDF report and the compliance radar.':
-    'प्रत्येक फ़ील्ड की मापी गई अंक ऊँचाई PDF रिपोर्ट और अनुपालन रडार पर दिखाई जाएगी।',
   'Quantitative regression set of synthetic labels with known pixel heights to validate every change.':
     'ज्ञात पिक्सेल ऊँचाई वाले सिंथेटिक लेबलों का मात्रात्मक प्रतिगमन सेट ताकि हर बदलाव सत्यापित हो।',
-  'Until the calibration-card workflow ships, an uncalibrated font-size axis is reported as REVIEW_REQUIRED — never as a fabricated violation.':
-    'जब तक अंशांकन-कार्ड कार्यप्रवाह तैयार नहीं होता, बिना अंशांकन वाला फ़ॉन्ट-आकार अक्ष REVIEW_REQUIRED घोषित होता है — कभी भी निर्मित उल्लंघन के रूप में नहीं।',
-  'This page documents the roadmap. The working pipeline — rule engine, evidence chain, VLM extraction, offline PWA — is unchanged and submission-ready.':
-    'यह पृष्ठ रोडमैप दर्शाता है। कार्यशील पाइपलाइन — रूल इंजन, साक्ष्य श्रृंखला, वीएलएम निष्कर्षण, ऑफ़लाइन PWA — अपरिवर्तित और सबमिशन-तैयार है।',
+  'When no usable reference (card, barcode or EXIF) is in the frame, the font axis reports CANNOT_MEASURE and its weight drops to 0 — never a fabricated violation.':
+    'जब फ़्रेम में कोई उपयोगी संदर्भ (कार्ड, बारकोड या EXIF) नहीं होता, तो फ़ॉन्ट अक्ष CANNOT_MEASURE दिखाता है और उसका वज़न 0 हो जाता है — कभी भी निर्मित उल्लंघन नहीं।',
+  'Font measurement is live in the shipped pipeline: calibration → OCR token height → millimetre verdict → PDF report → scored radar axis. Inputs that cannot be measured are reported honestly as CANNOT_MEASURE.':
+    'फ़ॉन्ट माप शिप्ड पाइपलाइन में लाइव है: अंशांकन → OCR टोकन ऊँचाई → मिलीमीटर निर्णय → PDF रिपोर्ट → स्कोर किया गया रडार अक्ष। अमापनीय इनपुट ईमानदारी से CANNOT_MEASURE बताए जाते हैं।',
 
   // ---- Admin (user management) ----
   'User Management': 'उपयोगकर्ता प्रबंधन',
