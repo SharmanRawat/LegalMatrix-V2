@@ -243,12 +243,70 @@ def verify_inspection(
     }
 
 
+_BEST_BEFORE_RE = re.compile(r"best\s*before", re.IGNORECASE)
+
+
+def _clean_best_before(line: str) -> str:
+    """Light display cleanup of an OCR'd 'Best before …' line."""
+    s = re.sub(r"best\s*before", "Best before", line, flags=re.IGNORECASE)
+    s = re.sub(r"([0-9])\s*Yr\.?s?\b", r"\1 Yrs", s, flags=re.IGNORECASE)
+    s = s.replace("Month&Year", "Month & Year").replace("Mfg.", "Mfg. ")
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _best_before_evidence(result: dict) -> Optional[dict]:
+    """Find a 'Best before …' formulation in the OCR transcript.
+
+    Many packs (e.g. cotton swabs) state shelf life relative to the
+    manufacturing date ('Best before 5 Yrs from Mfg. Month & Year') instead of
+    printing an absolute expiry date. When no expiry value was extracted we
+    surface the label's own wording as evidence — never a synthesized date.
+    """
+    transcripts = []
+    meta = result.get("meta")
+    if isinstance(meta, dict):
+        transcripts.append(meta.get("ocr_transcript"))
+    transcripts.append(result.get("ocr_transcript"))
+    for t in transcripts:
+        if not isinstance(t, list):
+            continue
+        for img in t:
+            if not isinstance(img, dict):
+                continue
+            text = img.get("text") or ""
+            for line in str(text).splitlines():
+                if not _BEST_BEFORE_RE.search(line):
+                    continue
+                cleaned = _clean_best_before(line)
+                if cleaned:
+                    return {"source": "OCR transcript", "text": cleaned}
+    return None
+
+
+def _enrich_expiry_label(inspection: dict) -> None:
+    """Display-only enrichment: fill a blank Expiry Date row with the label's
+    own 'Best before …' wording from the OCR transcript (if any)."""
+    decl = inspection.setdefault("declarations", {})
+    field_ev = inspection.setdefault("field_evidence", {})
+    if decl.get("expiry_date"):
+        return
+    ev = field_ev.get("expiry_date") or {}
+    if ev.get("text"):
+        return
+    bb = _best_before_evidence(inspection)
+    if not bb:
+        return
+    decl["expiry_date"] = bb["text"]
+    field_ev["expiry_date"] = bb
+
+
 @router.get("/inspect/{inspection_id}")
 async def get_inspection(inspection_id: str, user=Depends(optional_auth)):
     inspection = inspection_repo.get_inspection(inspection_id)
     if not inspection:
         raise HTTPException(404, f"Inspection {inspection_id} not found")
     _require_access(user, inspection)
+    _enrich_expiry_label(inspection)
     return inspection
 
 
@@ -654,6 +712,14 @@ def _build_pdf(result: Dict) -> bytes:
         ev = field_evidence.get(key) or {}
         ev_text = _sanitize(ev.get("text", ""))
         ev_src = ev.get("source", "")
+        # Surface a 'Best before …' label statement on the Expiry Date row when
+        # no absolute date was extracted (display-only, never fabricates).
+        if key == "expiry_date" and not val and not ev_text:
+            bb = _best_before_evidence(result)
+            if bb:
+                val = _sanitize(bb["text"])
+                ev_src = bb["source"]
+                ev_text = _sanitize(bb["text"])
         ev_disp = (f"{ev_src}: {ev_text}" if ev_src and ev_text else (ev_src or ev_text))[:60]
         if key in overrides:
             st, status_name = status_chip["OVERRIDDEN"], "OVERRIDDEN"

@@ -137,6 +137,7 @@ const SOURCE_LABELS: Record<string, string> = {
   'vlm+regex': 'Vision + pattern',
   regex: 'Pattern match',
   vlm: 'Vision model',
+  'OCR transcript': 'OCR transcript',
 }
 
 const CHECK_LABELS: Record<string, string> = {
