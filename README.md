@@ -212,10 +212,6 @@ demo product below is one of the 70+ real photos that the CPU pipeline extracts 
 5. **Instructor correction** — fix one field, show rules re-evaluate, then download the PDF
    and show it renders the corrected row while the original stays in `manual_overrides`.
 
-Keep the risky or blurry captures (curved glossy cans) out of the live demo — extraction
-quality on those is an honest model-budget limit, and the audit + evidence story is where
-the submission wins. For reference, the sweep ranked all 29 products: 3 at 9/9, 5 at 8/9,
-7 at 7/9, 6 at 6/9, and the bottom quarter at ≤5/9 — demo only the top group.
 
 ## Team
 
