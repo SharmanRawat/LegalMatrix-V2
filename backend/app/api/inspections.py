@@ -593,7 +593,10 @@ def _build_pdf(result: Dict) -> bytes:
     half = usable / 2
     meta_rows = [
         ("Inspection ID", str(result.get("inspection_id", "-")), "Date & Time", ts_disp),
-        ("Images Processed", str(result.get("images_processed", "-")), "Method", str(result.get("method", "-"))),
+        # Fresh pipeline results use images_processed/method; stored rows keep
+        # the column names images_count/model — accept both.
+        ("Images Processed", str(result.get("images_processed") or result.get("images_count") or "-"),
+         "Method", str(result.get("method") or result.get("model") or "-")),
         ("OCR Engine", f"{engine} (lang {OCR_LANG})", "Classifier", str(classifier)),
         ("Evidence SHA-256", (evidence.get("hash", "n/a") or "n/a")[:20], "Rules Version", str(result.get("rule_version", "n/a"))),
     ]
