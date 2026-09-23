@@ -44,11 +44,11 @@ const HI: Record<string, string> = {
     '"{name}" का पूर्वावलोकन नहीं हो सका (असमर्थित छवि प्रारूप?)',
   'Please select or capture at least one image': 'कृपया कम से कम एक छवि चुनें या कैप्चर करें',
   'Inspection completed!': 'जांच पूर्ण हुई!',
-  'Request timed out. The vision model can take several minutes.':
-    'अनुरोध का समय समाप्त हो गया। विज़न मॉडल को कई मिनट लग सकते हैं।',
+  'Request timed out. The analysis is still running on this device and may complete shortly.':
+    'अनुरोध का समय समाप्त हो गया। विश्लेषण अभी भी इस डिवाइस पर चल रहा है और शीघ्र पूरा हो सकता है।',
   'Failed to inspect images.': 'छवियों की जांच विफल रही।',
-  'Vision-model inspection typically takes 1-3 min per image. The request is in flight.':
-    'विज़न-मॉडल जांच में प्रति छवि आमतौर पर 1-3 मिनट लगते हैं। अनुरोध प्रगति पर है।',
+  'On-device OCR + language-model analysis — typically under a minute per image set. The request is in flight.':
+    'डिवाइस पर OCR + भाषा-मॉडल विश्लेषण — आमतौर पर प्रति छवि-सेट एक मिनट से कम। अनुरोध प्रगति पर है।',
   'Live pipeline': 'लाइव प्रोसेसिंग',
   events: 'ईवेंट',
   'Uploading images…': 'छवियाँ अपलोड हो रही हैं…',

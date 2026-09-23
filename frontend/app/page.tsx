@@ -263,7 +263,7 @@ export default function Home() {
       console.error('Error:', error)
       const msg =
         (error as { code?: string } | null)?.code === 'ECONNABORTED'
-          ? 'Request timed out. The vision model can take several minutes.'
+          ? 'Request timed out. The analysis is still running on this device and may complete shortly.'
           : apiError(error, 'Failed to inspect images.')
       toast.error(msg)
       setLoading(false)
@@ -528,7 +528,7 @@ export default function Home() {
                 <Loader2 className="w-5 h-5 text-accent animate-spin shrink-0" />
                 <div>
                   <p className="text-sm font-semibold text-text-primary">Analyzing… {elapsed}s</p>
-                  <p className="text-xs text-text-muted">Vision model typically takes 1–3 min per image</p>
+                  <p className="text-xs text-text-muted">On-device OCR + language-model analysis — typically under a minute per image set</p>
                 </div>
               </div>
               <div

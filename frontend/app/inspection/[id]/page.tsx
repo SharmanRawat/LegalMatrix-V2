@@ -133,6 +133,7 @@ const FIELD_LABELS: Record<string, string> = {
 }
 
 const SOURCE_LABELS: Record<string, string> = {
+  'llm+regex': 'LLM + pattern',
   'vlm+regex': 'Vision + pattern',
   regex: 'Pattern match',
   vlm: 'Vision model',

@@ -119,7 +119,7 @@ export default function LoginPage() {
             Every label, verified against the law.
           </h2>
           <p className="mt-3 text-white/70">
-            Capture a product&rsquo;s packaging once and let the vision model check
+            Capture a product&rsquo;s packaging once and let the app check the printed
             declarations against Legal Metrology rules — instantly.
           </p>
 
