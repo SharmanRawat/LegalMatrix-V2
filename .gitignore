@@ -38,6 +38,13 @@ yarn-error.log*
 
 # typescript
 *.tsbuildinfo
+
+# WSL/Windows download sidecars
+*:Zone.Identifier
+
+# large local-only assets (not part of the build/submission)
+new_images/
+PP-OCRv6_rec_medium.onnx
 next-env.d.ts
 
 # python

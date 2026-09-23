@@ -1,0 +1,444 @@
+================================================================================
+ LegalMatrix — Detailed Project & Technical Information for the 6-Slide PPT
+ SIH 2026 · Problem Statement PS 26034
+================================================================================
+
+This file contains everything needed to build the PPT. It is organized so that
+each numbered section maps naturally onto one slide. All facts are current as of
+the committed code state (September 2026). Pull text from the "Slide-ready
+copy" blocks verbatim, and use the "Nuts & bolts" sections to answer panels.
+
+--------------------------------------------------------------------------------
+SECTION 1 — THE PROBLEM (Slide 1)
+--------------------------------------------------------------------------------
+
+CONTEXT
+  - Smart India Hackathon 2026 (SIH 2026), Problem Statement PS 26034.
+  - Node: Ministry of Consumer Affairs, Food & Public Distribution /
+    Department of Consumer Affairs (Legal Metrology).
+  - ~500 teams are competing on this PS; the demo and evidence story are what
+    separate submissions.
+
+THE FIELD PROBLEM (as the panel frames it)
+  Under the Legal Metrology (Packaged Commodities) Rules, 2011 (as amended
+  through 2026), every packaged commodity sold to a consumer MUST declare, on
+  its principal display panel (PDP):
+    1. Name & registered address of manufacturer / importer / marketer
+    2. Common or generic name of the commodity
+    3. Net quantity (with SI unit)
+    4. Month and year of manufacture (or the "best before" equivalent)
+    5. Maximum Retail Price (MRP), inclusive of all taxes
+    6. Consumer care / grievance-redressal contact details
+    7. Dimensions (only for non-edible goods sold by dimension)
+  Enforcement is done by field inspectors who physically inspect retail
+  shelves. Today this is a manual, paper-driven process: they eyeball labels,
+  do mental arithmetic on MRP vs. unit-sale-price violations, and hand-write
+  reports that are hard to defend later in adjudication.
+
+WHY IT IS HARD
+  - Labels are noisy: glossy curved packaging, tiny fonts, watermarks, mixed
+    Hindi/English, Devanagari, mangled OCR tokens ("R110.00" for a ₹7 MRP).
+  - Violations are subtle: MRP can be printed but the label violates because
+    the container's net content is filled below declared quantity, or the MRP
+    is not inclusive of taxes.
+  - Enforcement needs EVIDENCE: a report that quotes the exact label text,
+    shows the photograph, and survives legal challenge — not just a verdict.
+
+SLIDE-READY COPY (heading + 3 bullets)
+  Title: LegalMatrix — AI Legal-Metrology Inspection for Packaged Commodities
+  • SIH 2026 · PS 26034 · Ministry of Consumer Affairs (Legal Metrology)
+  • Field inspectors photograph a product label with a phone; the platform
+    extracts the mandatory declarations, checks them against the
+    Legal Metrology (Packaged Commodities) Rules, 2011 (amended through 2026),
+    and flags missing or misleading declarations.
+  • Every scan is persisted with cryptographic evidence hashes (SHA-256) and
+    produces an evidence-backed report (PDF / JSON / CSV) for future
+    enforcement action.
+
+--------------------------------------------------------------------------------
+SECTION 2 — THE SOLUTION & HOW IT WORKS (Slide 2)
+--------------------------------------------------------------------------------
+
+WHAT LegalMatrix IS
+  An end-to-end "inspect → evaluate → evidence" platform:
+    1. Inspector captures 1–3 photos of the product label (browser or PWA).
+    2. CPU OCR (RapidOCR / PP-OCRv3, ONNX) reads the label text with word
+       boxes and per-word confidence.
+    3. A small on-device LLM classifier (Ollama qwen2.5:3b) maps the OCR lines
+       to the declaration fields, merged with regex extraction for structured
+       fields (MRP, net quantity, dates, consumer care).
+    4. The compliance rule engine evaluates the extracted declarations against
+       the codified 2011 Rules → status (COMPLIANT / POTENTIAL_VIOLATION /
+       REVIEW_REQUIRED) + an evidence-backed score.
+    5. Outputs: web report, PDF with embedded evidence photos, JSON/CSV
+       exports, a compliance certificate with a QR code whose payload can be
+       publicly verified, and an "Evidence Planner" that lists what evidence is
+       still needed for a defensible decision.
+
+THE 10 FROZEN FIELDS THE PIPELINE EXTRACTS
+  mrp, usp (unit sale price), net_quantity, product_name, manufacturer,
+  manufacturing_date, expiry_date, consumer_care, dimensions, edible (flag).
+
+PLUS AN 11TH DERIVED FIELD — manufacturer_address (side channel)
+  A deterministic maker-address extractor (manufacturer_address.py) reads only
+  the raw OCR token stream, scores each token for address salience (6-digit
+  PIN codes + street/city/office markers; licence-number digit runs excluded
+  as PIN impostors), groups the winners into visual runs by y-proximity, and
+  injects the best PIN-bearing run into declarations right after
+  `manufacturer` — e.g. "Amul Fed Dairy, Anand 388001". It is report/evidence
+  and instructor-editable, but by design NEVER modifies the frozen ten fields
+  or the compliance pipeline (the golden-statutory audit stays byte-identical).
+
+  IMPORTANT for Q&A: the derived address does NOT change the compliance
+  score. The Rule 6(1)(a) presence check and `missing_declarations` only read
+  the `manufacturer` value, so a label whose name extracts without its
+  address still scores full weight on that rule. The address is an evidence/
+  transparency enhancement, not a scoring input.
+
+  WHY it is not a scoring input (be ready to explain this):
+  • The score is passed/7 — each of the 7 rules maps to exactly one frozen
+    field; the address channel has no slot in that evaluation by design.
+  • The merged `manufacturer` value usually already embeds the address
+    (e.g. "…Regd. Office: …"), so Rule 6(1)(a) absorbs it indirectly —
+    a second gate would count the same evidence twice.
+  • The extractor is a heuristic (PIN + street/city markers on raw OCR
+    tokens) that can miss valid addresses (no PIN, back-panel placement,
+    foreign formats). Letting a miss reduce the score would flag legal
+    labels as non-compliant — against the "never fabricate a verdict" rule.
+    So misses are surfaced as evidence + a visual-verification hint instead.
+  • Keeping it out of scoring preserves the golden-statutory audit bit-for-bit
+    (the side-channel contract in manufacturer_address.py).
+  If the address should ever gate the rule, it needs benchmarked precision
+  across the 70+ photo corpus first, then a validated weight.
+
+CPU-FIRST DESIGN DECISION (judge bait — put this on the slide)
+  - The whole inference pipeline runs on a field inspector's laptop with NO
+    GPU: RapidOCR (PP-OCRv3, ONNX) + qwen2.5:3b classifier. Demo and
+    submission run entirely on this CPU path.
+  - Users only need a browser/PWA — no model download, no mobile compute.
+  - An optional Qwen2.5-VL (qwen2.5vl:7b) vision-model rescue exists for hard
+    labels but is OFF by default — proof the core works without a GPU.
+
+SLIDE-READY COPY
+  Title: From Photo to Verdict — The Pipeline
+  • 1–3 label photos captured by the inspector's phone
+  • CPU OCR extracts text + word confidence → LLM classifier maps lines to the
+    10 fixed declaration fields + a derived manufacturer-address channel
+    (regex preferred for structured fields)
+  • Rule engine checks against the 2011 Rules (as amended to 2026) → status +
+    evidence-backed score
+  • Outputs: report PDF, JSON/CSV, certificate with QR verification, and
+    Evidence Planner ("what is still needed for a defensible verdict")
+
+--------------------------------------------------------------------------------
+SECTION 3 — ARCHITECTURE & TECH STACK (Slide 3)
+--------------------------------------------------------------------------------
+
+RUNTIME TOPOLOGY
+  Inspector phone/PWA --HTTPS--> Next.js 16 frontend (:3000)
+        --/api proxy--> FastAPI backend (:8000)
+              |--> Ollama server (qwen2.5:3b CPU classifier)
+              |--> SQLite database (legalmatrix.db / users, inspections, images)
+              |--> evidence/ directory (photos + SHA-256), heatmaps/ overlays
+
+BACKEND  (Python 3.12+)
+  - FastAPI (async), SQLite via stdlib, OpenCV (barcode), fpdf2 (PDF reports).
+    No ORM, no heavy frameworks.
+  - Modules (backend/app/):
+      main.py                 FastAPI app, lifespan DB init + admin seed
+      config.py               env-driven settings, call-time path resolution
+      api/inspections.py      POST /api/inspect, PDF report, evidence,
+                              heatmap, certificate, verify, exports
+      api/auth.py             login, optional_auth, require_roles
+      services/ocr_engine.py  CPU OCR + LLM classification + regex merge
+      services/inspection_service.py  end-to-end pipeline orchestration
+      services/compliance_scorer.py  5-axis radar scoring
+      services/price_engine.py        USP math, exemptions, rounding
+      core/rule_engine.py             compliance rules (7 declarations +
+                                      placement/manner, missing-declarations)
+      repositories/           users / inspections (SQL)
+      database/models.py      schema
+      data/rules.json         codified rules incl. 2026 amendments
+  - Key endpoints: POST /api/inspect · POST /api/inspect/report (PDF) ·
+    GET /api/inspect/{id} (+/report /export /evidence/{i} /heatmap /certificate)
+    · GET /api/inspect/verify (public QR check) · GET /api/search ·
+    GET /api/dashboard/stats · PATCH /api/inspect/{id} (manual override).
+
+FRONTEND  (Next.js 16 · App Router · Turbopack)
+  - React 19, Tailwind v4, axios with bearer-token injection, PWA
+    (public/sw.js + manifest.json) — installable, offline shell.
+  - Pages: / (Inspect, 1–3 image picker/camera) · /dashboard (stats/trends) ·
+    /history (searchable table) · /inspection/[id] (single report) ·
+    /login · /admin (user management) · /verify (public QR verification).
+
+INFERENCE STACK
+  - RapidOCR (PP-OCRv3 ONNX) detection + recognition · Ollama qwen2.5:3b
+    classifier · optional qwen2.5vl:7b VLM rescue (default off).
+
+DEPLOYMENT
+  - docker-compose.yml: ollama + backend + frontend containers.
+  - OLLAMA_HOST=http://ollama:11434 in compose; SQLite + evidence volumes.
+  - Roadmap: Postgres swap when scaling beyond a single node; CPU OCR engine
+    upgrade to PP-OCRv6 (bench-verified, not yet merged).
+
+SLIDE-READY COPY
+  Title: Architecture — CPU-First, Evidence-Backed
+  • Phone/PWA → Next.js 16 (:3000) → FastAPI (:8000) → Ollama qwen2.5:3b
+    (CPU classifier) + SQLite + evidence storage
+  • Backend: FastAPI / Python 3.12 / SQLite / OpenCV / fpdf2 · no GPU needed
+  • Frontend: Next.js 16, React 19, Tailwind v4, PWA (installable/offline)
+  • Compliance engine: data/rules.json — 2011 Rules codified with all
+    amendments to 2026 (rule_version LM-PCR-2011-with-2021-USP-amendment-and-
+    all-updates-to-2026, effective 2023-04-01)
+
+--------------------------------------------------------------------------------
+SECTION 4 — THE COMPLIANCE ENGINE & SCORING (Slide 4)
+--------------------------------------------------------------------------------
+
+THE 7 REQUIRED DECLARATIONS (directly traceable to the Rules — put the table
+on the slide or use the 7 numbered items)
+  1. manufacturer_name_address — Rule 6(1)(a) — CRITICAL — name + registered
+     address of manufacturer/importer/marketer on the PDP
+  2. generic_commodity_name — Rule 6(1)(b) — CRITICAL — common name
+     ("Honey", "Sunflower Oil") prominent on PDP
+  3. net_quantity — Rule 6(1)(c) — CRITICAL — numeric + SI unit (g/kg/ml/L;
+     cm/m for length); liquids declared at 20 °C
+  4. month_year_manufacture — Rule 6(1)(d) — HIGH — month + year (MMM/YYYY,
+     MM/YYYY, MM/YY)
+  5. mrp — Rule 6(1)(e) — CRITICAL — "MRP Rs.XX / MRP ₹XX", inclusive of all
+     taxes; must contain a digit + currency symbol (₹ / Rs. / INR)
+  6. consumer_care_details — Rule 6(2) — HIGH — name+address+email and/or
+     phone; a contact channel (@ / toll free / 1800 / 10–12 digit) required
+  7. dimensions_where_relevant — Rule 6(1)(f) — MEDIUM — only for non-edible
+     goods sold by dimension; auto-skipped for edible products
+
+BEHAVIOUR
+  - Missing declaration → violation, status MISSING.
+  - Present but malformed → FORMAT_ISSUE (severity MEDIUM).
+  - Score = passed/7 × 100 (dimensions counts only when relevant).
+  - Truth, never fabrication: anything unmeasurable is honestly reported as
+    REVIEW_REQUIRED / CANNOT_MEASURE — the platform lists what evidence is
+    still needed instead of inventing a verdict.
+
+5-AXIS RADAR SCORING (current committed weights)
+  Declarations 0.375 · Pricing 0.25 · Dates 0.125 · Consumer Care 0.125 ·
+  Readability 0.125 (OCR confidence/legibility proxy = avg word confidence)
+  Overall grade (A/B/C/D) and radar recomputed from live inspection data; the
+  live demo inspection produced grade A, overall 97.5, COMPLIANT 7/7.
+
+PRICING ENGINE (USP / MRP checks — Rule math)
+  - compute_unit_sale_price, validate_usp with tolerance, USP exemptions,
+    unit extraction ("per 100 g" conversions), rounding rules.
+  - Misleading-declaration heuristics flag MRP-vs-USP mismatches and
+    net-quantity/price inconsistencies.
+
+SLIDE-READY COPY
+  Title: Compliance Engine — 7 Mandatory Declarations, 5-Axis Score
+  • Rules codified in data/rules.json: Legal Metrology (Packaged Commodities)
+    Rules, 2011 as amended through 2026 — every check maps to a rule citation
+  • CRITICAL: manufacturer name+address · product name · net quantity · MRP
+    (tax-inclusive) | HIGH: month/year of manufacture · consumer care |
+    MEDIUM: dimensions (non-edible only)
+  • Score = passed/7 × 100 + 5-axis radar (Declarations · Pricing · Dates ·
+    Consumer Care · Readability)
+  • Honest verdicts: unmeasurable → REVIEW_REQUIRED, never fabricated
+
+--------------------------------------------------------------------------------
+SECTION 5 — FEATURES & EVIDENCE-BACKED OUTPUTS (Slide 5)
+--------------------------------------------------------------------------------
+
+FEATURE LIST
+  1. Photo capture/upload (1–3 images) → full inspection in one flow.
+  2. Evidence-backed, tamper-evident outputs — every scan persisted with
+     per-image SHA-256 hashes; certificate QR payload
+     (inspection_id|evidence_hash) verifiable on the public /verify page
+     (hash_match: true).
+  3. PDF report with embedded evidence photos — renders the CORRECTED row, not
+     a re-run of OCR ("what you printed is what you saved").
+  4. Editable exports — JSON / CSV.
+  5. Instructor corrections — ADMIN/INSPECTOR fixes a wrong AI reading; rules
+     re-evaluate; original retained in meta.manual_overrides for audit.
+  6. Evidence Planner — lists missing_declarations and low-confidence reads so
+     the inspector knows exactly what physical evidence is still required for
+     a defensible decision; every flagged item traces to rule → field → OCR
+     token → image region → original photo.
+  7. Role-based access control — ADMIN / INSPECTOR / VIEWER, seeded from env;
+     admin user management (search, view scans, reset passwords; passwords
+     one-way hashed, never recoverable).
+  8. Dashboard (stats, trends, recent) + full search (id, product,
+     manufacturer, dates, status).
+  9. Heat-maps per photo highlighting MRP / net-quantity text regions -- ties
+     each verdict to a visual location on the package.
+
+SLIDE-READY COPY
+  Title: Features — Evidence You Can Take to Court
+  • SHA-256 evidence hashes per photo + QR certificate with public verification
+    (inspection_id|evidence_hash)
+  • PDF / JSON / CSV reports; PDF renders the corrected row (printed = saved)
+  • Instructor corrections with full audit trail (manual_overrides)
+  • Evidence Planner: never just a verdict — lists what evidence is still
+    needed for a defensible decision
+  • Role-based access (ADMIN/INSPECTOR/VIEWER) · dashboard · search · heatmaps
+
+--------------------------------------------------------------------------------
+SECTION 6 — VALIDATION, TESTING & THE DEMO (Slide 6)
+--------------------------------------------------------------------------------
+
+TESTING / VALIDATION
+  - 297 pytest tests passing (OCR mocked; OCR tests real) — rule evaluation,
+    USP/MRP math + exemptions, repositories, dashboard/search stats, HMAC
+    auth + role gating, the full inspect pipeline, PDF bytes, JSON/CSV
+    exports, evidence serving, readability signals.
+  - Frontend: TypeScript clean (tsc --noEmit), route checks pass.
+  - Golden-statutory corpus: images/ + backend/data/ + answers_golden.json
+    act as a frozen oracle — rule-engine behaviour is audited cell-by-cell
+    against it before any merge (backend/scripts/pipeline_audit.py).
+  - Field data: 70+ real label photos in images/; live DB currently holds
+    57 inspections (24 COMPLIANT · 32 POTENTIAL_VIOLATION · 1
+    REVIEW_REQUIRED) across 112 images — all generated through the real
+    pipeline, not seeded screenshots.
+
+DEMO PRODUCTS (seeded: 12 configurations from real photos)
+  Amul Gold Full Cream Milk · Tata Salt Iodised · Fortune Sunlite Refined
+  Sunflower Oil · Surf Excel Easy Wash Detergent Powder · Maggi 2-Minute
+  Masala Noodles · Colgate MaxFresh Toothpaste · Dettol Antiseptic Liquid ·
+  Aashirvaad Atta with Multi Grains · Parle-G Glucose Biscuits · Vim Dishwash
+  Liquid Gel.
+  Top extractors (verify 9/9 declarations on the CPU pipeline):
+  image1_*, image3_*, image8_*, image11_*.
+
+JUDGE-FACING DEMO WALKTHROUGH (sequence that wins)
+  1. Audit, not demo-magic: run pipeline_audit.py live — the rule engine is
+     checked cell-by-cell against the frozen golden-statutory oracle.
+  2. Inspect a demo-safe product (image1/3/8/11 photos) end-to-end.
+  3. Evidence Planner: trace a flagged item rule → field → OCR token → image
+     region → original photo.
+  4. QR verification: certificate → /verify → hash_match: true.
+  5. Instructor correction: fix one field → rules re-evaluate → PDF renders
+     corrected row, original stays in manual_overrides.
+
+NUMBERS PANEL LIKES (one-liner stats for the slide footer)
+  • 297 tests passing · 57 live inspections · 112 evidence images · 70+ real
+    label photos · 12 demo products · 10 extracted fields + derived address ·
+    7 rules · 5-axis radar · CPU-only inference (no GPU)
+
+SLIDE-READY COPY
+  Title: Validated — Proof, Not Screenshots
+  • 297 automated tests · golden-statutory audit against 70+ real label photos
+  • Live demo: 57 inspections, 24 COMPLIANT, 32 flagged, 1 review — generated
+    through the real pipeline
+  • Judge walkthrough: live audit script → end-to-end inspect → Evidence
+    Planner trace → QR verification → instructor correction
+  • CPU-first: runs on a field inspector's laptop, no GPU
+
+--------------------------------------------------------------------------------
+SECTION 7 — FONT-SIZE MEASUREMENT (DIFFERENTIATOR — STATUS: LIVE & VALIDATED)
+--------------------------------------------------------------------------------
+IMPORTANT CONTEXT FOR THE DECK
+  This feature is the strongest differentiator vs. the ~387–500 competing
+  submissions. It was removed once for submission-safety review, then restored
+  and VALIDATED on real field photos (Sept 2026): a barcode-calibrated
+  measurement of a real product label produced a genuine COMPLIANT verdict
+  (1.96 mm measured vs 1.0 mm required, ±0.29 uncertainty) and a scored
+  Font Size radar axis (weight 0.20, grade A, overall 94.4). When no usable
+  reference (card/barcode/EXIF) is in the frame, it honestly reports
+  CANNOT_MEASURE and the axis weight drops to 0 — the score never pretends
+  fine print was verified.
+  The project's governing rule: never fabricate a measurement — an
+  uncalibrated image is reported as CANNOT_MEASURE / REVIEW_REQUIRED.
+
+WHAT IT DOES
+  Measures the PHYSICAL height of the declaration text on the label (letters
+  and numerals) in millimetres and checks it against the minimum font heights
+  prescribed by the Legal Metrology (Packaged Commodities) Rules, 2011 —
+  catching an entire class of violations (fine-print labels) that pure OCR
+  extraction cannot see.
+
+THE CALIBRATION CHAIN (scale_calibrator.py) — pixels → millimetres
+  1. credit_card — a credit/debit card photographed beside the product is
+     ISO/IEC 7810 ID-1: 85.60 × 53.98 mm, an exact, traceable pixels-per-mm
+     reference (aspect ~1.586, detection tolerances: aspect 1.30–1.90, area
+     1.5–65% of frame, angle ≤ 18°, uncertainty ±6%). A hand-made cardboard
+     card of the same dimensions satisfies this rung.
+  2. barcode — product barcode (20.0 mm nominal width) as a coarser
+     reference; magnification not fixed → higher uncertainty (±15%).
+  3. exif — camera-metric estimate from phone EXIF (35 mm-equivalent focal
+     length → horizontal FOV, + SubjectDistance); uncertainty ±20%, PPM
+     bounds 1.0–300.0.
+  4. None usable → measure() returns CANNOT_MEASURE with an auditable reason.
+     We never fabricate a figure from an uncalibrated image.
+
+MEASUREMENT (font_measurement.py)
+  - New pipeline: each OCR token's pixel height → mm via the calibration
+    reference → compare against the rule minimum.
+  - Legacy VLM path: CAP-HEIGHT of glyphs inside a text-region box (vertical
+    height of the dominant capital/digit stroke cluster, so descenders do not
+    inflate the reading).
+  - Fallback heuristic (component heights in the lower half of the image) is
+    UNVALIDATED → always reported as REVIEW_REQUIRED (informational only,
+    never an automated verdict).
+  - Defensibility gates: geometric + glyph sanity checks per box/token; a
+    measured mm outside [0.3 × required, 10.0 × required] is implausible and
+    forces REVIEW_REQUIRED; rejected calibrations carry a reason string.
+
+THE REGULATORY THRESHOLDS (font_size_requirements in rules.json)
+  Letters (normal / embossed): 1.0 / 2.0 mm
+  Numerals on weight/volume declarations (by net quantity):
+    ≤ 200 g/ml → 1.0 / 2.0 mm · 200–500 → 2.0 / 4.0 mm · > 500 → 4.0 / 6.0 mm
+  Numerals on length/area/number declarations (by PDP area):
+    ≤ 100 cm² → 1.0 / 2.0 mm · 100–500 → 2.0 / 4.0 mm · 500–2500 → 4.0 / 6.0 mm
+    · > 2500 cm² → 6.0 / 6.0 mm
+
+SCORING IMPACT
+  Restores the 6-axis radar (Declarations 0.30 · Pricing 0.20 · Dates 0.10 ·
+  Consumer Care 0.10 · Font Size 0.20 · Readability 0.10). When no
+  calibration reference exists, the Font Size axis weight drops to 0 and the
+  overall score is re-weighted across the axes that ARE measured — the score
+  never silently pretends fine print was verified.
+
+SLIDE-READY COPY (extend Slide 4 with 2–3 bullets)
+  Title: Differentiator — Physical Font-Size Measurement
+  • Measures REAL text height in millimetres using a credit-card (ISO 7810)
+    or cardboard reference card as a traceable scale — catches "fine-print"
+    labels that pass OCR extraction
+  • Calibration chain: credit card → barcode → EXIF; no reference → honest
+    CANNOT_MEASURE (never a fabricated verdict)
+  • Checks against the Rules' minimum font heights (1–6 mm by net quantity
+    and PDP area, normal vs embossed)
+
+--------------------------------------------------------------------------------
+PROJECT STORY / VERSION HISTORY (useful for the "about us" line or Q&A)
+--------------------------------------------------------------------------------
+  LegalMatrix (formerly MetrIQ) is a SIH 2026 PS 26034 submission built over
+  a series of hardening sprints:
+  - Backend fixes & demo readiness (rule gating, net-quantity fixes)
+  - Frontend integration with a light redesign
+  - Rebrand to LegalMatrix + corrected Rule 6 citations
+  - Font-measurement feature built (card → barcode → EXIF calibration,
+    thresholds 1–6 mm), briefly removed on reliability concerns, then
+    restored and validated on real field photos: barcode-calibrated token
+    measurement produced a live COMPLIANT font verdict (1.96 mm vs 1.0 mm
+    required) with a scored 6-axis radar. The governing rule stays: "never
+    fabricate a verdict" — unmeasurable inputs are reported honestly as
+    CANNOT_MEASURE with the axis weight dropped to 0.
+  Team standing: the differentiators are the golden-statutory audit, the
+  evidence/SHA-256 chain, the Evidence Planner, and honest CPU-first
+  engineering — not demo-magic.
+
+--------------------------------------------------------------------------------
+QUICKSTART (include only if a slide needs "how we built it")
+--------------------------------------------------------------------------------
+  ollama pull qwen2.5:3b
+  python -m venv backend/venv
+  backend/venv/bin/pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+  LEGALMATRIX_DATA_DIR=backend/data backend/venv/bin/uvicorn app.main:app --app-dir backend --port 8000
+  cd frontend && npm install && npm run dev   # → http://localhost:3000
+  Env vars: OLLAMA_HOST, FIELD_CLASSIFIER_MODEL (qwen2.5:3b),
+  QWN_MODEL (qwen2.5vl:7b), VLM_RESCUE_ENABLED (0 default),
+  LEGALMATRIX_AUTH_SECRET, LEGALMATRIX_DATA_DIR, OCR_MAX_IMAGE_SIZE (896).
+  Security: change LEGALMATRIX_AUTH_SECRET + admin password before production.
+================================================================================
+EOF — prepared for the 6-slide PPT (Problem → Solution → Architecture →
+Compliance Engine → Features → Validation/Demo; + font-measurement
+differentiator section for Q&A depth)
+================================================================================
