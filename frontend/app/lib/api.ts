@@ -1,6 +1,7 @@
 'use client'
 
 import axios from 'axios'
+import { useSyncExternalStore } from 'react'
 
 export interface SessionUser {
   id?: string
@@ -32,11 +33,51 @@ export function getUser(): SessionUser | null {
 export function setSession(token: string, user: SessionUser) {
   window.localStorage.setItem(TOKEN_KEY, token)
   window.localStorage.setItem(USER_KEY, JSON.stringify(user))
+  notifySession()
 }
 
 export function clearSession() {
   window.localStorage.removeItem(TOKEN_KEY)
   window.localStorage.removeItem(USER_KEY)
+  notifySession()
+}
+
+let sessionCache: { raw: string | null; user: SessionUser | null } | null = null
+const sessionListeners = new Set<() => void>()
+
+function getSessionSnapshot(): SessionUser | null {
+  if (typeof window === 'undefined') return null
+  const raw = window.localStorage.getItem(USER_KEY)
+  if (!sessionCache || sessionCache.raw !== raw) {
+    let user: SessionUser | null = null
+    if (raw) {
+      try {
+        user = JSON.parse(raw) as SessionUser
+      } catch {
+        user = null
+      }
+    }
+    sessionCache = { raw, user }
+  }
+  return sessionCache.user
+}
+
+function subscribeSession(callback: () => void) {
+  sessionListeners.add(callback)
+  return () => {
+    sessionListeners.delete(callback)
+  }
+}
+
+function notifySession() {
+  sessionCache = null
+  sessionListeners.forEach((listener) => listener())
+}
+
+/** SSR-safe reactive session read. Server + first hydration render use `null`,
+ * then React's post-hydration re-check swaps in the real user without a mismatch. */
+export function useSession(): SessionUser | null {
+  return useSyncExternalStore(subscribeSession, getSessionSnapshot, () => null)
 }
 
 export const api = axios.create({ timeout: 600000 })
@@ -79,6 +120,44 @@ export interface HeatmapInfo {
   image_index: number
   field_boxes: Record<string, [number, number, number, number]>
   calibration_box: [number, number, number, number] | null
+}
+
+const dateFmt = new Intl.DateTimeFormat(undefined, {
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+})
+const dateTimeFmt = new Intl.DateTimeFormat(undefined, {
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+})
+
+function toDate(value: string | Date): Date | null {
+  const d = typeof value === 'string' ? new Date(value) : value
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+/** Locale-aware date only: 21/09/2026 */
+export function formatDate(value: string | Date): string {
+  const d = toDate(value)
+  return d ? dateFmt.format(d) : '—'
+}
+
+/** Locale-aware date + time: 21/09/2026, 20:01 */
+export function formatDateTime(value: string | Date): string {
+  const d = toDate(value)
+  return d ? dateTimeFmt.format(d) : '—'
+}
+
+/** "mrp" / "net_quantity" → "Mrp" / "Net Quantity" (same rules as formatStatus) */
+export function titleCaseField(key: string): string {
+  return key
+    .replace(/_/g, ' ')
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
 export async function downloadBlob(url: string, filename: string): Promise<void> {

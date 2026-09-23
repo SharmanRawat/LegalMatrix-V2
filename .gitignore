@@ -84,6 +84,10 @@ backend/image36_2.jpg
 *.tmp
 *.log
 
+# agent/browser test artifacts
+.playwright-mcp/
+.opencode/
+
 # secrets - NEVER commit tokens, .env, or service keys
 .env*
 !.env.example
