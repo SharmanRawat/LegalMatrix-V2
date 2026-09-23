@@ -970,6 +970,37 @@ def _field_evidence(individual_results: List[Dict], merged: Dict) -> Dict[str, D
     return evidence
 
 
+def _relevant_declarations(declarations: Dict):
+    """Required-statutory list for THIS scan plus their field keys.
+
+    Non-applicable declarations (e.g. dimensions on count-sold goods, expiry on
+    packs that state shelf life relative to manufacturing) are excluded so the
+    overall confidence reflects the load-bearing statutory fields only.
+    """
+    required = rule_engine.get_required_declarations()
+    relevant = [r for r in required
+                if not (r == "dimensions_where_relevant" and not _dimensions_relevant(declarations))]
+    fields = [REQUIRED_TO_FIELD[r] for r in relevant if r in REQUIRED_TO_FIELD]
+    return relevant, fields
+
+
+def confidence_overall(confs: Dict[str, float], declarations: Dict, missing: List[str]) -> float:
+    """Overall extraction confidence from per-field scores.
+
+    Mean over the fields required for this scan (see _relevant_declarations),
+    capped by statutory-field coverage so a 'name only' scan can't score well.
+    Shared by the extraction pipeline and the read-time display layer so stored
+    rows and fresh runs always agree.
+    """
+    relevant, fields = _relevant_declarations(declarations)
+    if not fields:
+        return 0.0
+    base = sum(confs.get(k, 0.0) for k in fields) / len(fields)
+    present = len(relevant) - sum(1 for m in missing if m in relevant)
+    coverage = (present / len(relevant)) if relevant else 1.0
+    return round(base * (0.5 + 0.5 * coverage), 1)
+
+
 def _extraction_confidence(
     individual_results: List[Dict],
     merged: Dict,
@@ -1004,20 +1035,10 @@ def _extraction_confidence(
             score += 5.0
         confs[key] = round(max(0.0, min(100.0, score)), 1)
 
-    if confs:
-        base = sum(confs.values()) / len(confs)
-    else:
-        base = 0.0
-
-    # Required statutory fields are the load-bearing ones; cap overall confidence
-    # by the coverage ratio so a "name only" scan can't score well.
-    required = rule_engine.get_required_declarations()
-    relevant = [r for r in required
-                if not (r == "dimensions_where_relevant" and not _dimensions_relevant(merged))]
+    relevant, _fields = _relevant_declarations(merged)
     present = len(relevant) - sum(1 for m in missing if m in relevant)
     coverage = (present / len(relevant)) if relevant else 1.0
-
-    overall = round(base * (0.5 + 0.5 * coverage), 1)
+    overall = confidence_overall(confs, merged, missing)
     return {
         "overall": overall,
         "coverage_ratio": round(coverage, 2),

@@ -300,6 +300,26 @@ def _enrich_expiry_label(inspection: dict) -> None:
     field_ev["expiry_date"] = bb
 
 
+def _display_overall_confidence(result: dict) -> Optional[float]:
+    """Recompute overall extraction confidence at display time.
+
+    Stored rows written before the confidence fix averaged every measured field
+    (including non-applicable ones such as dimensions on count-sold goods or
+    expiry on packs with a 'Best before' formulation) into the overall number.
+    Recompute from by_field with the same relevant-fields math as fresh runs.
+    """
+    conf = result.get("extraction_confidence") or {}
+    by_field = conf.get("by_field")
+    declarations = result.get("declarations")
+    if not isinstance(by_field, dict) or not isinstance(declarations, dict):
+        return conf.get("overall")
+    try:
+        return inspection_service.confidence_overall(
+            by_field, declarations, result.get("missing_declarations") or [])
+    except Exception:
+        return conf.get("overall")
+
+
 @router.get("/inspect/{inspection_id}")
 async def get_inspection(inspection_id: str, user=Depends(optional_auth)):
     inspection = inspection_repo.get_inspection(inspection_id)
@@ -307,6 +327,11 @@ async def get_inspection(inspection_id: str, user=Depends(optional_auth)):
         raise HTTPException(404, f"Inspection {inspection_id} not found")
     _require_access(user, inspection)
     _enrich_expiry_label(inspection)
+    # Read-time confidence recompute so stored rows match fresh-run math.
+    rec = _display_overall_confidence(inspection)
+    conf = inspection.get("extraction_confidence")
+    if rec is not None and isinstance(conf, dict):
+        inspection["extraction_confidence"] = {**conf, "overall": rec}
     return inspection
 
 
@@ -671,7 +696,7 @@ def _build_pdf(result: Dict) -> bytes:
     passed = result.get("passed_count", 0)
     total = result.get("total_rules", 0)
     conf = result.get("extraction_confidence") or {}
-    overall_conf = conf.get("overall")
+    overall_conf = _display_overall_confidence(result)  # stored rows: same math as fresh
     box = usable / 3
     _stat_box(pdf, box, "COMPLIANCE SCORE", f"{score}%", sc)
     _stat_box(pdf, box, "RULES PASSED", f"{passed}/{total}", (37, 99, 235))
