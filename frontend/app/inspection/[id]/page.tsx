@@ -77,6 +77,19 @@ interface InspectionDetail {
   violations: Violation[]
   misleading_checks?: ConsistencyCheck[]
   manual_overrides?: ManualOverride
+  font_measurement?: {
+    status: string
+    measured_mm: number | null
+    uncertainty: number | null
+    required_mm: number | null
+    calibration?: string | null
+    ppm?: number | null
+    method?: string | null
+    calibration_rejected_reason?: string | null
+    box_rejected_reason?: string | null
+    implausible?: boolean
+    image_index?: number | null
+  } | null
   compliance_radar?: RadarResult | null
   grade?: string
   heatmaps?: HeatmapInfo[]
@@ -134,6 +147,13 @@ function humanizeEvidence(text: string, fieldKey: string): string {
   return text
     .replace(/^\[DEMO\]\s*/, 'Demo — ')
     .replace(new RegExp(`\\b${fieldKey}:`), `${label}:`)
+}
+
+function humanizeCalibration(value: string | null | undefined): string {
+  if (!value) return '—'
+  if (/credit[_\s-]?card/i.test(value)) return 'Credit-card reference'
+  if (/barcode/i.test(value)) return 'Barcode reference'
+  return value.replace(/_/g, ' ')
 }
 
 function humanizeMethod(value: string | null | undefined): string {
@@ -556,10 +576,80 @@ export default function InspectionDetailPage() {
               </div>
             </Card>
 
+            {data.font_measurement && (
+              <Card className="animate-reveal" style={{ animationDelay: '200ms' }}>
+                <h2 className="font-semibold text-text-primary mb-3">Font Size &amp; Readability</h2>
+                {data.font_measurement.status === 'CANNOT_MEASURE' ? (
+                  <div className="rounded-lg bg-surface border border-surface-border p-3">
+                    <p className="text-sm font-medium text-text-primary">
+                      Cannot measure — manual review required.
+                    </p>
+                    {data.font_measurement.calibration_rejected_reason && (
+                      <p className="mt-1 text-xs text-text-muted">
+                        Reason: {data.font_measurement.calibration_rejected_reason}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                      <div>
+                        <p className="text-xs text-text-muted">Measured</p>
+                        <p className="text-lg font-semibold text-text-primary">
+                          {data.font_measurement.measured_mm ?? '—'} mm
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-text-muted">Required</p>
+                        <p className="text-lg font-semibold text-text-primary">
+                          {data.font_measurement.required_mm ?? '—'} mm
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-text-muted">Uncertainty</p>
+                        <p className="text-lg font-semibold text-text-primary">
+                          ±{data.font_measurement.uncertainty ?? '—'} mm
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-text-muted">Status</p>
+                        <Badge variant={statusToVariant(data.font_measurement.status)} className="mt-1">
+                          {formatStatus(data.font_measurement.status)}
+                        </Badge>
+                      </div>
+                    </div>
+                    {data.font_measurement.implausible && (
+                      <p className="mt-2 text-xs text-warning bg-warning/10 border border-warning/20 rounded px-2 py-1">
+                        Reading flagged implausible relative to the legal minimum — box may have
+                        hit the wrong text. Manual review.
+                      </p>
+                    )}
+                    {data.font_measurement.box_rejected_reason && (
+                      <p className="mt-2 text-xs text-text-muted">
+                        VLM text box rejected ({data.font_measurement.box_rejected_reason}) —
+                        value is informational only.
+                      </p>
+                    )}
+                    <p className="mt-2 text-[11px] text-text-muted">
+                      Calibration: {humanizeCalibration(data.font_measurement.calibration)}
+                      {data.font_measurement.ppm != null && ` at ${data.font_measurement.ppm} px/mm`}
+                      {' · '}Method: {humanizeMethod(data.font_measurement.method)}
+                      {data.font_measurement.image_index != null &&
+                        ` · Measured from photo #${data.font_measurement.image_index + 1}`}
+                    </p>
+                  </>
+                )}
+              </Card>
+            )}
+
             {data.compliance_radar && (
               <Card className="animate-reveal" style={{ animationDelay: '240ms' }}>
                 <h2 className="font-semibold text-text-primary mb-3">Compliance Radar</h2>
                 <RadarChart radar={data.compliance_radar} />
+                <p className="mt-3 text-xs text-text-muted">
+                  Font-size axis is excluded when no calibration reference (credit card /
+                  barcode) is present — the axis is unknown, not a violation.
+                </p>
               </Card>
             )}
 
@@ -568,7 +658,7 @@ export default function InspectionDetailPage() {
                 <h2 className="font-semibold text-text-primary mb-1">Compliance Heat-Map</h2>
                 <p className="text-xs text-text-muted mb-3">
                   Verdicts drawn onto each photo — green = compliant, red = violation,
-                  yellow = low confidence.
+                  yellow = low confidence, cyan = calibration reference.
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {(data.heatmaps ?? []).map((h, i) => (

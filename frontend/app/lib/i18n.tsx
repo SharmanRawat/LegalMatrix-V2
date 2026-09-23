@@ -96,13 +96,13 @@ const HI: Record<string, string> = {
   // ---- Results section ----
   'rules passed': 'नियम पारित',
   'Compliance Radar': 'अनुपालन रडार',
-  'Axes weighed by legal impact (declarations 37.5%, pricing 25%, dates 12.5%, consumer care 12.5%, readability 12.5%).':
-    'अक्षों का भार कानूनी प्रभाव से तय होता है (घोषणाएँ 37.5%, मूल्य निर्धारण 25%, तिथियाँ 12.5%, उपभोक्ता सेवा 12.5%, पठनीयता 12.5%)।',
+  'Axes weighed by legal impact (declarations 30%, pricing 20%, dates 10%, consumer care 10%, font size 20%, readability 10%). The font-size axis is excluded when no calibration reference (credit card / barcode) is present.':
+    'अक्षों का भार कानूनी प्रभाव से तय होता है (घोषणाएँ 30%, मूल्य निर्धारण 20%, तिथियाँ 10%, उपभोक्ता सेवा 10%, फ़ॉन्ट आकार 20%, पठनीयता 10%)। जब कोई अंशांकन संदर्भ (क्रेडिट कार्ड / बारकोड) मौजूद न हो तो फ़ॉन्ट-आकार अक्ष बाहर रखा जाता है।',
   'Compliance Heat-Map': 'अनुपालन हीट-मैप',
-  'Verdicts drawn back onto the photo — green = compliant, red = violation, yellow = low confidence.':
-    'फैसले फ़ोटो पर अंकित किए गए हैं — हरा = अनुपालक, लाल = उल्लंघन, पीला = कम विश्वास।',
-  'Verdicts drawn onto each photo — green = compliant, red = violation, yellow = low confidence.':
-    'फैसले प्रत्येक फ़ोटो पर अंकित किए गए हैं — हरा = अनुपालक, लाल = उल्लंघन, पीला = कम विश्वास।',
+  'Verdicts drawn back onto the photo — green = compliant, red = violation, yellow = low confidence, cyan = calibration reference.':
+    'फैसले फ़ोटो पर अंकित किए गए हैं — हरा = अनुपालक, लाल = उल्लंघन, पीला = कम विश्वास, सियान = अंशांकन संदर्भ।',
+  'Verdicts drawn onto each photo — green = compliant, red = violation, yellow = low confidence, cyan = calibration reference.':
+    'फैसले प्रत्येक फ़ोटो पर अंकित किए गए हैं — हरा = अनुपालक, लाल = उल्लंघन, पीला = कम विश्वास, सियान = अंशांकन संदर्भ।',
   'Heat-map unavailable': 'हीट-मैप अनुपलब्ध',
   'Photo {n} heat-map': 'फ़ोटो {n} का हीट-मैप',
   'Extracted Declarations': 'निष्कर्षित घोषणाएँ',
@@ -129,6 +129,18 @@ const HI: Record<string, string> = {
   'All Rules Passed': 'सभी नियम पारित',
   'No compliance violations detected.': 'कोई अनुपालन उल्लंघन नहीं मिला।',
   'Consistency Checks ({n})': 'संगति जाँच ({n})',
+  'Font Measurement': 'फ़ॉन्ट माप',
+  Measured: 'मापा गया',
+  Required: 'आवश्यक',
+  Uncertainty: 'अनिश्चितता',
+  'Reading flagged implausible relative to the legal minimum — manual review.':
+    'कानूनी न्यूनतम के सापेक्ष माप असंभव प्रतीत हुआ — मैन्युअल समीक्षा आवश्यक।',
+  'Calibration:': 'अंशांकन:',
+  ' at {n} px/mm': ' {n} px/mm पर',
+  'Method:': 'विधि:',
+  ' · Measured from photo #{n}': ' · फ़ोटो #{n} से मापा गया',
+  'Cannot measure — manual review required.': 'माप संभव नहीं — मैन्युअल समीक्षा आवश्यक।',
+  'Reason:': 'कारण:',
   'Evidence Hash': 'साक्ष्य हैश',
   'SHA-256:': 'SHA-256:',
   'ID:': 'ID:',
@@ -156,6 +168,13 @@ const HI: Record<string, string> = {
     'किसी एआई रीडिंग को सुधारने के लिए मान पर क्लिक करें। संशोधन जांच में सहेजे जाते हैं, नियमों का पुनर्मूल्यांकन होता है, और मूल मान ऑडिट के लिए रखा जाता है।',
   'Read-only (ADMIN / INSPECTOR can correct values).': 'केवल-पठनीय (एडमिन / निरीक्षक मान सुधार सकते हैं)।',
   'MANUALLY CORRECTED': 'मैन्युअल रूप से संशोधित',
+  'Font Size & Readability': 'फ़ॉन्ट आकार और पठनीयता',
+  'Reading flagged implausible relative to the legal minimum — box may have hit the wrong text. Manual review.':
+    'कानूनी न्यूनतम के सापेक्ष माप असंभव प्रतीत हुआ — बॉक्स ने गलत टेक्स्ट पकड़ा हो सकता है। मैन्युअल समीक्षा।',
+  'VLM text box rejected ({reason}) — value is informational only.':
+    'वीएलएम टेक्स्ट बॉक्स अस्वीकृत ({reason}) — मान केवल सूचनात्मक है।',
+  'Font-size axis is excluded when no calibration reference (credit card / barcode) is present — the axis is unknown, not a violation.':
+    'जब कोई अंशांकन संदर्भ (क्रेडिट कार्ड / बारकोड) मौजूद न हो तो फ़ॉन्ट-आकार अक्ष बाहर रखा जाता है — अक्ष अज्ञात है, उल्लंघन नहीं।',
   'All rules passed': 'सभी नियम पारित',
   'Export JSON': 'JSON निर्यात करें',
   'Export CSV': 'CSV निर्यात करें',
@@ -203,7 +222,33 @@ const HI: Record<string, string> = {
   'Start one now': 'अभी एक शुरू करें',
   'Failed to load dashboard': 'डैशबोर्ड लोड नहीं हो सका',
 
+  // ---- Font Measurement (roadmap) ----
+  'Font Size Measurement': 'फ़ॉन्ट आकार माप',
+  'Roadmap · Coming soon': 'रोडमैप · जल्द आ रहा है',
+  'Legal Metrology (Packaged Commodities) Rules 2011 require minimum numeral heights that scale with net quantity (1–4 mm normal, 2–6 mm embossed). Measuring them reliably is the next engineering milestone.':
+    'विधिक मेट्रोलॉजी (पैक किए गए उपभोक्ता सामान) नियम 2011 के अनुसार शुद्ध मात्रा के अनुसार अंकों की न्यूनतम ऊँचाई आवश्यक है (सामान्य 1–4 मिमी, उभरे हुए 2–6 मिमी)। इन्हें विश्वसनीय रूप से मापना अगला इंजीनियरिंग माइलस्टोन है।',
   'Try a new inspection': 'नई जांच आज़माएँ',
+  'What the pipeline does today': 'पाइपलाइन आज क्या करती है',
+  'Calibration chain (credit card → barcode → EXIF)': 'अंशांकन श्रृंखला (क्रेडिट कार्ड → बारकोड → EXIF)',
+  'A physically traceable reference converts pixels to millimetres: an ISO/IEC 7810 card (85.60 × 53.98 mm) beside the product is the exact reference; a product barcode is coarser; phone EXIF camera-metrics is never an automated verdict.':
+    'एक भौतिक रूप से अनुरेखणीय संदर्भ पिक्सेल को मिलीमीटर में बदलता है: उत्पाद के पास रखा ISO/IEC 7810 कार्ड (85.60 × 53.98 मिमी) सटीक संदर्भ है; उत्पाद बारकोड मोटा है; फ़ोन EXIF कैमरा-मेट्रिक्स कभी स्वचालित निर्णय नहीं देती।',
+  'Honest measurement, never fabricated': 'ईमानदार माप, कभी निर्मित नहीं',
+  'When a calibration reference is present, numeral height is measured in millimetres with an explicit uncertainty band. When none is present, the axis is excluded from the score and reported as REVIEW_REQUIRED with an auditable reason — we never output a millimetre value we cannot defend.':
+    'जब अंशांकन संदर्भ मौजूद होता है, तो अंकों की ऊँचाई स्पष्ट अनिश्चितता सीमा के साथ मिलीमीटर में मापी जाती है। जब कोई संदर्भ नहीं होता, तो अक्ष को स्कोर से बाहर रखा जाता है और पता लगाने योग्य कारण के साथ REVIEW_REQUIRED घोषित किया जाता है — हम कभी ऐसा मिलीमीटर मान नहीं निकालते जिसका हम बचाव न कर सकें।',
+  'Defensibility gates on every reading': 'हर रीडिंग पर बचाव-योग्यता द्वार',
+  'Each text region passes geometric and glyph sanity checks. A measured height outside the plausible range forces manual review, and the uncalibrated lower-half heuristic never produces an automated verdict.':
+    'प्रत्येक टेक्स्ट क्षेत्र ज्यामितीय और ग्लिफ़ सत्यापन से गुजरता है। संभावित सीमा से बाहर मापी गई ऊँचाई मैन्युअल समीक्षा के लिए बाध्य करती है, और बिना अंशांकन वाला निचला-आधा ह्यूरिस्टिक कभी स्वचालित निर्णय नहीं देता।',
+  "What's next": 'आगे क्या',
+  'Guided calibration-card capture flow in the capture UI — the inspector is told when a reference is missing.':
+    'कैप्चर UI में निर्देशित अंशांकन-कार्ड कैप्चर प्रवाह — निरीक्षक को बताया जाता है कि संदर्भ गायब है।',
+  'Per-field measured numeral height rendered on the PDF report and the compliance radar.':
+    'प्रत्येक फ़ील्ड की मापी गई अंक ऊँचाई PDF रिपोर्ट और अनुपालन रडार पर दिखाई जाएगी।',
+  'Quantitative regression set of synthetic labels with known pixel heights to validate every change.':
+    'ज्ञात पिक्सेल ऊँचाई वाले सिंथेटिक लेबलों का मात्रात्मक प्रतिगमन सेट ताकि हर बदलाव सत्यापित हो।',
+  'Until the calibration-card workflow ships, an uncalibrated font-size axis is reported as REVIEW_REQUIRED — never as a fabricated violation.':
+    'जब तक अंशांकन-कार्ड कार्यप्रवाह तैयार नहीं होता, बिना अंशांकन वाला फ़ॉन्ट-आकार अक्ष REVIEW_REQUIRED घोषित होता है — कभी भी निर्मित उल्लंघन के रूप में नहीं।',
+  'This page documents the roadmap. The working pipeline — rule engine, evidence chain, VLM extraction, offline PWA — is unchanged and submission-ready.':
+    'यह पृष्ठ रोडमैप दर्शाता है। कार्यशील पाइपलाइन — रूल इंजन, साक्ष्य श्रृंखला, वीएलएम निष्कर्षण, ऑफ़लाइन PWA — अपरिवर्तित और सबमिशन-तैयार है।',
 
   // ---- Admin (user management) ----
   'User Management': 'उपयोगकर्ता प्रबंधन',

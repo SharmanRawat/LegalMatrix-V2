@@ -42,8 +42,9 @@ inspection_id (LGM-YYYYMMDD-HHMMSS-XXXXXX), timestamp, method ("rapidocr + qwen2
 images_processed, declarations{10}, missing_declarations[rule_ids], status,
 compliance_score, passed_count, total_rules, violations[{rule_id,rule_no,severity,
 status,field,extracted_value,description,remediation}], misleading_checks[],
-extraction_prompt_hash, compliance_radar{overall,grade,axes[]}, grade,
-heatmaps[{filename,image_index,field_boxes}],
+extraction_prompt_hash, font_measurement{measured_mm,required_mm,uncertainty,
+status,calibration_bbox,…}, compliance_radar{overall,grade,axes[]}, grade,
+heatmaps[{filename,image_index,field_boxes,calibration_box}],
 evidence{hash,images[{filename,sha256,original_name}]},
 field_evidence{field:{source,text,image_index}}, extraction_confidence{overall,
 coverage_ratio,fields_present/required,by_field{}}
@@ -56,7 +57,7 @@ HMAC auth (`auth_service.py`), seeded admin iff table empty.
 
 `inspections(id PK TEXT, product_name, manufacturer, status, compliance_score,
 passed_count, total_rules, declarations_json, missing_json, violations_json,
-misleading_json, meta_json{compliance_radar,grade,heatmaps,
+misleading_json, meta_json{compliance_radar,grade,font_measurement,heatmaps,
 ocr_engine,classifier,field_evidence,extraction_confidence,manual_overrides},
 evidence_hash, images_count, model, user_id FK, created_at)` — indexed on
 created_at/status/product/manufacturer; `_migrate` adds new columns idempotently.
@@ -73,6 +74,6 @@ Blue primary (#2563EB), status colours green/amber/red (`COMPLIANT/REVIEW_REQUIR
 POTENTIAL_VIOLATION` + score bands 80/50), severity chips
 CRITICAL/HIGH/MEDIUM/LOW, radar grade A–D, per-field green value vs red
 `NOT DETECTED`, grey `[via engine] "quoted OCR text"` provenance line, heat-map
-field boxes. PDF mirrors the same sections (report header,
-confidence, photos, declarations+provenance, violations+fix, footer
+field boxes + calibration box. PDF mirrors the same sections (report header,
+confidence, photos, declarations+provenance, font, violations+fix, footer
 disclaimer + timestamp). Fonts: system/Helvetica in PDF (₹ sanitized to `Rs.`).

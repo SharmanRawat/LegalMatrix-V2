@@ -124,6 +124,8 @@ OCR_ENHANCE_MAX_SIDE = int(os.getenv("OCR_ENHANCE_MAX_SIDE", "1920"))
 OCR_MULTI_PASS_ENABLED = os.getenv("OCR_MULTI_PASS_ENABLED", "1") == "1"
 OCR_MULTI_PASS_ON_FAIL = os.getenv("OCR_MULTI_PASS_ON_FAIL", "1") == "1"
 OCR_PANE_ZOOM_ENABLED = os.getenv("OCR_PANE_ZOOM_ENABLED", "0") == "1"
+# Calibration: "auto" (credit-card -> barcode -> exif) | "credit_card" | "barcode" | "exif"
+FONT_CALIBRATION = os.getenv("FONT_CALIBRATION", "auto")
 
 # CORS
 ALLOWED_ORIGINS = [

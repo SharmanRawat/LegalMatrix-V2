@@ -31,15 +31,16 @@ Inspector phone/PWA --HTTPS--> Next.js 16 frontend (:3000) --/api proxy--> FastA
 | `api/inspections.py` | `POST /inspect`, `POST /inspect/report` (PDF), `GET/PATCH /inspect/{id}`, evidence/heatmap/certificate serving, JSON/CSV export |
 | `api/dashboard.py`, `api/search.py` | stats/trends/recent; search filters |
 | `core/rule_engine.py` | 7-rule evaluation + format checks, loads `data/rules.json` |
-| `services/inspection_service.py` | **Pipeline orchestrator** (`run_inspection`): extract per image → merge → missing → confidence → optional VLM rescue → compliance → misleading → heatmaps → radar → persist |
+| `services/inspection_service.py` | **Pipeline orchestrator** (`run_inspection`): extract per image → merge → missing → confidence → optional VLM rescue → compliance → font → misleading → heatmaps → radar → persist |
 | `services/ocr_engine.py` | **Fast path (default)**: enhance → RapidOCR (onnxruntime, word boxes+conf) → `field_classifier` (SLM qwen2.5:3b, regex fallback) → tokens + field_map + regions. 742 lines; includes ₹-glyph fixes, glued-date splitting, month-glyph repair, multi-pass escalation |
 | `services/field_classifier.py` | 1015-line LLM + regex classifier (address-line, company-strip, edible support) |
 | `services/ocr_service.py` | **Legacy/oracle path**: direct qwen2.5vl:7b extraction + `regions` boxes + currency re-verify + prompt fingerprint. Used as ground-truth oracle in audits and as VLM rescue |
 | `services/vlm_rescuer.py` | Rescue low-confidence CPU results with VLM (only if `VLM_RESCUE_ENABLED=1`) |
 | `services/preprocessing.py` | EXIF transpose, resize (`OCR_ENHANCE_MAX_SIDE=1920`), grayscale/Otsu/inverted/CLAHE/2x variants, capture-time |
+| `services/font_measurement.py`, `scale_calibrator.py` | Barcode→credit-card→EXIF calibration chain, cap-height from token boxes, required-mm lookup, `CANNOT_MEASURE` gating |
 | `services/price_engine.py` | MRP/net-qty → expected USP math + exemption logic |
-| `services/compliance_scorer.py` | Radar axes + grade A–D (5 axes: declarations, pricing, dates, consumer care, readability) |
-| `services/heatmap_generator.py` | Field-box overlays per photo |
+| `services/compliance_scorer.py` | Radar axes + grade A–D + merge across photos |
+| `services/heatmap_generator.py` | Field-box + calibration-box overlays per photo |
 | `services/post_processor.py` | Value canonicalization |
 | `services/certificate_generator.py` | Tamper-evident certificate PDF |
 | `repositories/users.py`, `inspections.py` | Raw SQL (no ORM); `save/get/list/update_overrides/add_image` |
@@ -47,7 +48,7 @@ Inspector phone/PWA --HTTPS--> Next.js 16 frontend (:3000) --/api proxy--> FastA
 | `models/schema.py`, `utils/` | Pydantic schemas, helpers |
 | `scripts/pipeline_audit.py` | **Product-by-product oracle audit** (see §4) |
 | `scripts/regex_audit.py`, `cascade_bench.py` | Regex-only ablation; CPU vs VLM cost/accuracy bench |
-| `tests/` | 266 pytest tests, OCR mocked (`conftest.py`); covers rules, USP math, repos, dashboard/search, auth gating, pipeline, PDF/exports, evidence, product-6 regression (`test_product6_fixes.py`) |
+| `tests/` | 76 pytest tests, OCR mocked (`conftest.py`); covers rules, USP math, repos, dashboard/search, auth gating, pipeline, PDF/exports, evidence, font calibration/gating, synthetic cap-height recovery, product-6 regression (`test_product6_fixes.py`) |
 
 ## 3. Inspection pipeline (single request)
 
@@ -59,10 +60,11 @@ Inspector phone/PWA --HTTPS--> Next.js 16 frontend (:3000) --/api proxy--> FastA
 6. Optional rescue: if `VLM_RESCUE_ENABLED=1` and overall < `VLM_RESCUE_CONFIDENCE_THRESHOLD` (55) → `vlm_rescuer` re-reads.
 7. `_verify_mrp_currency` — bare-number MRP gets a second VLM look for a dropped ₹/Rs. glyph before failing Rule 6(1)(e).
 8. `rule_engine.evaluate_compliance` (+ currency_verified) → violations, score `passed/total*100`.
-9. `_check_misleading` — mrp_format, usp==mrp, usp vs computed mismatch.
-10. Heat-maps rendered into evidence dir; radar built; prompt fingerprint + engine labels recorded; evidence SHA-256 chained; everything persisted with `user_id`.
+9. Font: net-qty → required mm → per-photo `_measure_font_for_image` (OCR tokens preferred, VLM box fallback), first measurable wins, `CANNOT_MEASURE` kept aside honestly.
+10. `_check_misleading` — mrp_format, usp==mrp, usp vs computed mismatch.
+11. Heat-maps rendered into evidence dir; radar built/merged; prompt fingerprint + engine labels recorded; evidence SHA-256 chained; everything persisted with `user_id`.
 
-`PATCH /inspect/{id}` (`apply_manual_overrides`) re-runs steps 4+8+9+radar on corrected values and logs `{original, corrected, by_user_id, at}` in `meta.manual_overrides`.
+`PATCH /inspect/{id}` (`apply_manual_overrides`) re-runs steps 4+8+10+radar on corrected values and logs `{original, corrected, by_user_id, at}` in `meta.manual_overrides`.
 
 ## 4. Oracle audit loop (how extraction accuracy is improved)
 

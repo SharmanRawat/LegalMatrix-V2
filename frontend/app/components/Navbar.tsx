@@ -11,6 +11,7 @@ import {
   LogOut,
   ChevronDown,
   Languages,
+  Ruler,
   Users,
   type LucideIcon,
 } from 'lucide-react'
@@ -21,6 +22,7 @@ const NAV_LINKS: { href: string; label: string; Icon: LucideIcon; adminOnly?: bo
   { href: '/dashboard', label: 'Dashboard', Icon: LayoutDashboard },
   { href: '/', label: 'Inspect', Icon: Scan },
   { href: '/history', label: 'History', Icon: History },
+  { href: '/font-measurement', label: 'Font Size', Icon: Ruler },
   { href: '/admin', label: 'User Management', Icon: Users, adminOnly: true },
 ]
 

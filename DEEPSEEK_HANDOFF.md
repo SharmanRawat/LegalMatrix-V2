@@ -1,10 +1,5 @@
 # DeepSeek Handoff Prompt — LegalMatrix
 
-> **Update (2026-09-24):** the font-measurement feature (`font_measurement.py`,
-> `scale_calibrator.py`, `font_size_requirements` rules, radar Font Size axis, and the
-> `/font-measurement` page) was **removed entirely** after weak product-test verdicts.
-> Sections 6/7 below describe that feature historically; treat it as removed, not current.
-
 Paste the block below into DeepSeek verbatim, along with any files you want it to act on.
 
 ---
